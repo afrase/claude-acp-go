@@ -6,6 +6,7 @@
 package sessions
 
 import (
+	"cmp"
 	"io"
 	"os"
 	"path/filepath"
@@ -207,6 +208,13 @@ func readLite(path string) (lite, bool) {
 	return l, true
 }
 
+// customTitle is the session's title: the user's, else the one claude
+// made, the last of each, from the end first.
+func (l lite) customTitle() string {
+	return cmp.Or(lastString(l.tail, "customTitle"), lastString(l.head, "customTitle"),
+		lastString(l.tail, "aiTitle"), lastString(l.head, "aiTitle"))
+}
+
 // info reads a session's details from its transcript's start and end;
 // false for a subagent's transcript or one with nothing to name it by.
 func (l lite) info(id, cwd string) (Info, bool) {
@@ -215,16 +223,14 @@ func (l lite) info(id, cwd string) (Info, bool) {
 		return Info{}, false
 	}
 	info := Info{ID: id, Size: l.size, LastModified: l.modified}
-	info.CustomTitle = firstOf(
-		lastString(l.tail, "customTitle"), lastString(l.head, "customTitle"),
-		lastString(l.tail, "aiTitle"), lastString(l.head, "aiTitle"))
+	info.CustomTitle = l.customTitle()
 	info.FirstPrompt = firstPrompt(l.head)
-	info.Summary = firstOf(info.CustomTitle, lastString(l.tail, "lastPrompt"), lastString(l.tail, "summary"), info.FirstPrompt)
+	info.Summary = cmp.Or(info.CustomTitle, lastString(l.tail, "lastPrompt"), lastString(l.tail, "summary"), info.FirstPrompt)
 	if info.Summary == "" {
 		return Info{}, false
 	}
-	info.GitBranch = firstOf(lastString(l.tail, "gitBranch"), firstString(l.head, "gitBranch"))
-	info.Cwd = firstOf(firstString(l.head, "cwd"), cwd)
+	info.GitBranch = cmp.Or(lastString(l.tail, "gitBranch"), firstString(l.head, "gitBranch"))
+	info.Cwd = cmp.Or(firstString(l.head, "cwd"), cwd)
 	// Only a tag record's tag: a tool call's input may say "tag" too.
 	for _, line := range slices.Backward(strings.Split(l.tail, "\n")) {
 		if strings.HasPrefix(line, `{"type":"tag"`) {
@@ -243,14 +249,4 @@ func (l lite) info(id, cwd string) (Info, bool) {
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, s)
 	return t
-}
-
-// firstOf returns the first of values that isn't "".
-func firstOf(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
