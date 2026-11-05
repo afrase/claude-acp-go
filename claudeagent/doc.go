@@ -42,7 +42,9 @@
 // on disk.
 package claudeagent
 
-// Version is this module's version. It names the client app in claude's
-// User-Agent when Options.ClientApp is empty, and claudeacp's agent in
-// its initialize answer.
-const Version = "0.1.0"
+// Version is this module's version as the Go build recorded it ("0.2.1"
+// for v0.2.1), or "devel" when the build has none (a checkout, go run, a
+// test). It names the client app in claude's User-Agent when
+// Options.ClientApp is empty, and claudeacp's agent in its initialize
+// answer.
+var Version = moduleVersion()

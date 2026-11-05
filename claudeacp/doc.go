@@ -46,4 +46,4 @@ import "github.com/afrase/claude-acp-go/claudeagent"
 const Name = "claudeacp"
 
 // Version is the agent's version in its initialize answer: the module's.
-const Version = claudeagent.Version
+var Version = claudeagent.Version
