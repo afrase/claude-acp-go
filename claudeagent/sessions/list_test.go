@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -262,6 +263,46 @@ func TestGet(t *testing.T) {
 	}
 	if _, err := (Store{ConfigDir: config}).Get("not-a-uuid", cwd); err == nil || errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Get of a bad id = %v", err)
+	}
+}
+
+// ReadInfo tells of the transcript it is given, whichever Get would find:
+// the newer of a session's two here, which List tells of too. A named pipe
+// isn't opened (it would wait for a writer), by List either.
+func TestReadInfo(t *testing.T) {
+	config, _, dir := project(t)
+	moved := filepath.Join(config, "projects", "-zz-moved")
+	id, side := newUUID(), newUUID()
+	now := time.Now()
+	fixture{prompt: "old", cwd: "/first", modified: now.Add(-time.Hour)}.write(t, dir, id)
+	fixture{prompt: "new", cwd: "/zz/moved", modified: now}.write(t, moved, id)
+	fixture{sidechain: true}.write(t, dir, side)
+
+	for _, c := range []struct{ dir, summary, cwd string }{{dir, "old", "/first"}, {moved, "new", "/zz/moved"}} {
+		s, err := ReadInfo(filepath.Join(c.dir, id+".jsonl"))
+		if err != nil || s.ID != id || s.Summary != c.summary || s.Cwd != c.cwd {
+			t.Errorf("ReadInfo in %s = %+v, %v", filepath.Base(c.dir), s, err)
+		}
+	}
+	if got := mustList(t, config, ""); len(got) != 1 || got[0].Summary != "new" {
+		t.Errorf("List = %+v", got)
+	}
+	pipe := filepath.Join(dir, newUUID()+".jsonl")
+	if err := syscall.Mkfifo(pipe, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustList(t, config, ""); len(got) != 1 {
+		t.Errorf("List with a pipe = %+v", got)
+	}
+	for _, path := range []string{filepath.Join(dir, newUUID()+".jsonl"), filepath.Join(dir, side+".jsonl"), pipe} {
+		if _, err := ReadInfo(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("ReadInfo(%s) = %v", filepath.Base(path), err)
+		}
+	}
+	for _, path := range []string{filepath.Join(dir, "notes.jsonl"), filepath.Join(dir, id), dir} {
+		if _, err := ReadInfo(path); !errors.Is(err, ErrInvalidID) {
+			t.Errorf("ReadInfo(%s) = %v", filepath.Base(path), err)
+		}
 	}
 }
 

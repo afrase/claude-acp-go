@@ -7,6 +7,7 @@ package sessions
 
 import (
 	"cmp"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,8 +20,8 @@ import (
 // details sit in the first records and the last ones.
 const liteRead = 64 << 10
 
-// Info is what List and Get tell of a session, read from the first and last
-// 64 KiB of its transcript and from the file.
+// Info is what List, Get and ReadInfo tell of a session, read from the first
+// and last 64 KiB of its transcript and from the file.
 type Info struct {
 	// ID is the session's id, the transcript's name.
 	ID string
@@ -36,7 +37,7 @@ type Info struct {
 	// GitBranch is the branch recorded last.
 	GitBranch string
 	// Cwd is the session's working directory as recorded, else the folder
-	// it was listed for.
+	// it was listed for (ReadInfo has none: "").
 	Cwd string
 	// Tag is the session's last tag; "" when it has none.
 	Tag string
@@ -161,12 +162,36 @@ func (s Store) Get(id, cwd string) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cwd != "" {
+		cwd = canonical(cwd)
+	}
+	return readInfo(path, id, cwd)
+}
+
+// ReadInfo returns the details of the session whose transcript is the file
+// at path, as Get tells them: for a caller that walks the project folders
+// itself, and so knows which of a session's transcripts it means when
+// more than one folder has one (Get takes the first it finds). Cwd is ""
+// when no record says it. ErrInvalidID when the file isn't named
+// <id>.jsonl; an error matching fs.ErrNotExist, as Get's, when it isn't
+// there or can't be read, is a subagent's, or has nothing to name it by.
+func ReadInfo(path string) (*Info, error) {
+	id, ok := strings.CutSuffix(filepath.Base(path), ".jsonl")
+	if !ok {
+		return nil, fmt.Errorf("%q: %w", path, ErrInvalidID)
+	}
+	if err := checkID(id); err != nil {
+		return nil, err
+	}
+	return readInfo(path, id, "")
+}
+
+// readInfo reads session id's details from its transcript at path; cwd is
+// its working directory, when known.
+func readInfo(path, id, cwd string) (*Info, error) {
 	l, ok := readLite(path)
 	if !ok {
 		return nil, notFound("session " + id)
-	}
-	if cwd != "" {
-		cwd = canonical(cwd)
 	}
 	info, ok := l.info(id, cwd)
 	if !ok {
@@ -183,8 +208,12 @@ type lite struct {
 }
 
 // readLite reads path's first and last 64 KiB; false for an empty file or
-// one that can't be read.
+// one that can't be read. What isn't a regular file is never opened:
+// opening a named pipe would wait for its writer.
 func readLite(path string) (lite, bool) {
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		return lite{}, false
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return lite{}, false
