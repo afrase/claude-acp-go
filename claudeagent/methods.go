@@ -180,8 +180,12 @@ type ContextUsage struct {
 // ContextCategory is one kind of what fills the context window: the
 // system prompt, tools, messages, free space.
 type ContextCategory struct {
-	Name       string `json:"name"`
-	Tokens     int    `json:"tokens"`
+	Name   string `json:"name"` // English, for display: claude may reword it
+	Tokens int    `json:"tokens"`
+	// Kind is what to classify the category on, never Name: "used",
+	// "free", "buffer" (kept for compaction) or "deferred"; claude may
+	// add more, and an older one sends none ("").
+	Kind       string `json:"kind"`
 	IsDeferred bool   `json:"isDeferred"`
 }
 

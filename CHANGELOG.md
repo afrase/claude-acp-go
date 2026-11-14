@@ -4,8 +4,9 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
-- The module builds on Windows again (`claudeagent/sessions` used Unix-only open flags; claude-tee Unix-only signals). `make check` and CI build and vet it for Windows; the tests still run on macOS and Linux only.
+- The module builds on Windows (`claudeagent/sessions` used Unix-only open flags; claude-tee Unix-only signals). `make check` and CI build and vet it for Windows; the tests still run on macOS and Linux only.
 - `claudeagent.Decode` copies the line it is given, so a message's `Raw` no longer changes when the caller reuses its buffer (a `bufio.Scanner`'s, say).
+- `claudeagent.ContextCategory` has `Kind` ("used", "free", "buffer", "deferred"), the field claude says to classify a category on, rather than its English name.
 
 ## v0.3.1 (2026-11-14)
 
