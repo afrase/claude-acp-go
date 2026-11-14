@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: an ExitPlanMode call is titled `Approve Plan` and a Skill call `Load skill: <skill>`, as claude-agent-acp 0.94 titles them (they said `Plan ready` and `Skill <skill>`).
 - `claudeacp`: a fast mode change claude refused says "Claude didn't change fast mode: …", where it said "the fast".
 - `claudeacp`: ExitPlanMode's answer is checked against the options the user was shown, not ones worked out again when the answer came: Auto mode picked on a model that lost it meanwhile starts the work accepting edits, where the approval became "The user cancelled."
 - `claudeacp`: what a subagent's stream was writing (its last message's text, its tool uses' inputs) is forgotten when the subagent ends, rather than kept until the session closes.
