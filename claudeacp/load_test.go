@@ -3,6 +3,7 @@ package claudeacp
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,6 +71,62 @@ func TestLoadReplaysHistory(t *testing.T) {
 	<-f.Played()
 	if args := f.Spec().Args; !slices.Contains(args, "--resume="+sid) || slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "--session-id") }) {
 		t.Errorf("args %q", args)
+	}
+}
+
+// A call the history has no result for (claude was stopped while it ran,
+// or the session was forked before its result) ends failed, as nothing
+// will end it now.
+func TestLoadCallWithNoResult(t *testing.T) {
+	p := start(t, nil, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "Run it"), asstRec("a1", "msg_1", useBlock("toolu_x", "Bash", `{"command":"sleep 100"}`)))
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{sid + " user u1 Run it", sid + " call toolu_x sleep 100 pending", sid + " update toolu_x failed", sid + " commands"}
+	if got := p.replayed(); !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A prompt claude took into a running turn is kept only as an attachment:
+// a load replays it as the user's message where claude took it, under the
+// uuid of the message it came from, as the SDK reads it; not one claude
+// wrote (a task's end, a meta prompt), nor one the transcript has as a
+// user message too.
+func TestLoadPromptTakenIntoTurn(t *testing.T) {
+	p := start(t, nil, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	attachment := func(uuid string, fields map[string]any) rec {
+		a := map[string]any{"type": "queued_command"}
+		maps.Copy(a, fields)
+		return rec{"type": "attachment", "uuid": uuid, "attachment": a}
+	}
+	p.writeHistory(t, cwd, sid,
+		userRec("u1", "Fix it"),
+		asstRec("a1", "msg_1", useBlock("toolu_1", "Bash", `{"command":"go test"}`)),
+		userRec("r1", resultBlocks("toolu_1", "ok", false)),
+		attachment("q1", map[string]any{"prompt": "Also add a test", "source_uuid": "src1"}),
+		attachment("q2", map[string]any{"prompt": "<task-notification><task-id>b</task-id><status>completed</status></task-notification>",
+			"origin": map[string]any{"kind": "task-notification"}}),
+		attachment("q3", map[string]any{"prompt": "a reminder", "isMeta": true}),
+		attachment("q4", map[string]any{"prompt": "Fix it", "source_uuid": "u1"}),
+		asstRec("a2", "msg_2", textBlock("Done, with a test.")),
+	)
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		sid + " user u1 Fix it",
+		sid + " call toolu_1 go test pending",
+		sid + " update toolu_1 completed",
+		sid + " user src1 Also add a test",
+		sid + " text msg_2 Done, with a test.",
+		sid + " commands",
+	}
+	if got := p.replayed(); !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
