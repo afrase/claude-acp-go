@@ -86,8 +86,9 @@ func TestToolLifecycle(t *testing.T) {
 }
 
 // An edit's diff is the snippet until claude's response gives the hunks
-// it made; a command's output is fenced, its progress shown once; a
-// subagent's calls say whose they are; one claude refused fails.
+// it made; a command's output is fenced, each beat of its progress
+// saying how long it has run; a subagent's calls say whose they are; one
+// claude refused fails.
 func TestToolResults(t *testing.T) {
 	steps := []claudetest.Step{user("id2"), echo("id2"),
 		assistant(`{"type":"tool_use","id":"toolu_e","name":"Edit","input":{"file_path":"/w/a.go","old_string":"x","new_string":"y"}}`),
@@ -111,7 +112,8 @@ func TestToolResults(t *testing.T) {
 		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"_meta":{"claudeCode":{"toolName":"Edit","toolResponse":{"filePath":"/w/a.go","structuredPatch":[{"lines":[" a","-x","+y"],"oldStart":1}]}}}}`,
 		`tool_call_update {"toolCallId":"toolu_e","status":"completed","rawOutput":"ok","_meta":{"claudeCode":{"toolName":"Edit"}}}`,
 		`tool_call {"toolCallId":"toolu_b","title":"go test","name":"Bash","kind":"execute","status":"pending","rawInput":{"command":"go test"},"_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash"}}}`,
-		`tool_call_update {"toolCallId":"toolu_b","status":"in_progress","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash"}}}`,
+		`tool_call_update {"toolCallId":"toolu_b","status":"in_progress","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":1}}}}`,
+		`tool_call_update {"toolCallId":"toolu_b","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":2}}}}`,
 		"tool_call_update {\"toolCallId\":\"toolu_b\",\"status\":\"failed\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"```\\nExit code 1\\nFAIL\\n```\"}}],\"rawOutput\":\"Exit code 1\\nFAIL\",\"_meta\":{\"claudeCode\":{\"parentToolUseId\":\"toolu_p\",\"toolName\":\"Bash\"}}}",
 		`tool_call {"toolCallId":"toolu_w","title":"Fetch https://x","name":"WebFetch","kind":"fetch","status":"pending","rawInput":{"url":"https://x"},"_meta":{"claudeCode":{"toolName":"WebFetch"}}}`,
 		`tool_call_update {"toolCallId":"toolu_w","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: denied by a rule"}}],"_meta":{"claudeCode":{"toolName":"WebFetch","toolResponse":{"decisionReason":"a rule","decisionReasonType":"","message":"denied by a rule"}}}}`,
@@ -367,6 +369,31 @@ func TestHookDiffs(t *testing.T) {
 		`tool_call_update {"toolCallId":"toolu_s","content":[{"type":"diff","path":"/w/s.txt","oldText":"same","newText":"same"}]`,
 	}
 	if !slices.Equal(got, want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A beat under an id of its own (a heartbeat's, a subagent's retries')
+// is its parent call's, with the subagent's type and retries.
+func TestProgressOfParent(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_a","name":"Agent","input":{"description":"Look","prompt":"p"}}`),
+		sendf(`{"type":"tool_progress","tool_use_id":"toolu_a-heartbeat-1","tool_name":"Agent","parent_tool_use_id":"toolu_a","elapsed_time_seconds":3,"subagent_type":"Explore"}`),
+		sendf(`{"type":"tool_progress","tool_use_id":"agent_msg_9","tool_name":"Agent","parent_tool_use_id":"toolu_a","elapsed_time_seconds":6,"subagent_type":"Explore",`+
+			`"subagent_retry":{"agent_id":"a1","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":429,"error_category":"rate_limit"}}`),
+		sendf(`{"type":"tool_progress","tool_use_id":"toolu_z","tool_name":"Bash","parent_tool_use_id":null,"elapsed_time_seconds":1}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"Done."}]}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := p.toolUpdates()
+	want := []string{
+		`tool_call_update {"toolCallId":"toolu_a","status":"in_progress","_meta":{"claudeCode":{"toolName":"Agent","toolResponse":{"elapsedTimeSeconds":3,"subagentType":"Explore"}}}}`,
+		`tool_call_update {"toolCallId":"toolu_a","_meta":{"claudeCode":{"toolName":"Agent","toolResponse":{"elapsedTimeSeconds":6,"subagentRetry":{"agent_id":"a1","attempt":1,"error_category":"rate_limit","error_status":429,"max_retries":10,"retry_delay_ms":500},"subagentType":"Explore"}}}}`,
+	}
+	if len(got) != 4 || !slices.Equal(got[1:3], want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

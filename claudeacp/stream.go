@@ -46,7 +46,7 @@ func (s *session) handle(m claudeagent.Message) {
 	case *claudeagent.User:
 		s.user(m)
 	case *claudeagent.ToolProgress:
-		s.tools.progress(m.ToolUseID)
+		s.tools.progress(m)
 	case *claudeagent.PermissionDenied:
 		s.tools.denied(m)
 	case *claudeagent.Result:

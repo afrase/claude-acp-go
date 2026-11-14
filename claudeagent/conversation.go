@@ -117,6 +117,12 @@ type ToolProgress struct {
 	ParentToolUseID    string  `json:"parent_tool_use_id"`
 	ElapsedTimeSeconds float64 `json:"elapsed_time_seconds"`
 	TaskID             string  `json:"task_id"`
+	// SubagentType is an Agent call's subagent's type, and SubagentRetry
+	// claude's retries of its API requests (agent_id, attempt,
+	// max_retries, retry_delay_ms, error_status, error_category), while
+	// a rate limit holds it.
+	SubagentType  string          `json:"subagent_type"`
+	SubagentRetry json.RawMessage `json:"subagent_retry"`
 }
 
 // RateLimit is the account's rate limit state; Info is claude's

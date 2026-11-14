@@ -147,13 +147,33 @@ func (ts *tools) result(b claudeagent.Block, structured json.RawMessage) {
 	ts.out.release(t.id) // its work, if it started a subagent claude never named
 }
 
-// progress is a tool still running.
-func (ts *tools) progress(id string) {
+// progress is a tool still running: each beat goes, saying how long it
+// has run (and an Agent call's subagent's type and retries), as
+// claude-agent-acp sends them. A beat under an id of its own (claude's
+// heartbeats, a subagent's retries) is its parent call's.
+func (ts *tools) progress(m *claudeagent.ToolProgress) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if t := ts.byID[id]; t != nil && !t.ended {
-		ts.sendLocked(t, report{status: acp.ToolCallStatusInProgress})
+	t := ts.byID[m.ToolUseID]
+	if t == nil {
+		t = ts.byID[m.ParentToolUseID]
 	}
+	if t == nil || t.ended {
+		return
+	}
+	retry := m.SubagentRetry
+	if string(retry) == "null" {
+		retry = nil
+	}
+	beat, err := json.Marshal(struct {
+		ElapsedTimeSeconds float64         `json:"elapsedTimeSeconds"`
+		SubagentType       string          `json:"subagentType,omitempty"`
+		SubagentRetry      json.RawMessage `json:"subagentRetry,omitempty"`
+	}{m.ElapsedTimeSeconds, m.SubagentType, retry})
+	if err != nil {
+		beat = nil // retries that aren't JSON: the beat says it runs only
+	}
+	ts.sendLocked(t, report{status: acp.ToolCallStatusInProgress, response: beat})
 }
 
 // denied is a tool use claude refused without asking.
