@@ -332,3 +332,41 @@ func TestStructuredResult(t *testing.T) {
 		t.Errorf("%s", strings.Join(got, "\n"))
 	}
 }
+
+// The hook's diffs say where each hunk is; a Write over a file whose
+// response has no hunks shows the old text and the new, or says the old
+// was too big to diff, rather than keep a diff that shows a new file.
+func TestHookDiffs(t *testing.T) {
+	steps := []claudetest.Step{user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_e","name":"Edit","input":{"file_path":"/w/a.go","old_string":"x","new_string":"y"}}`),
+	}
+	steps = append(steps, hookCall("toolu_e", "Edit", `{"filePath":"/w/a.go","structuredPatch":[{"oldStart":119,"newStart":120,"lines":[" a","-x","+y","\\ No newline at end of file"]}]}`)...)
+	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_w","name":"Write","input":{"file_path":"/w/big.log","content":"new"}}`))
+	steps = append(steps, hookCall("toolu_w", "Write", `{"type":"update","filePath":"/w/big.log","content":"new","structuredPatch":[],"originalFile":null}`)...)
+	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_s","name":"Write","input":{"file_path":"/w/s.txt","content":"same"}}`))
+	steps = append(steps, hookCall("toolu_s", "Write", `{"type":"update","filePath":"/w/s.txt","content":"same","structuredPatch":[],"originalFile":"same"}`)...)
+	for _, id := range []string{"toolu_e", "toolu_w", "toolu_s"} {
+		steps = append(steps, sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"`+id+`","content":"ok"}]}}`))
+	}
+	steps = append(steps, result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, fake(steps...))
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	var got []string
+	for _, u := range p.toolUpdates() {
+		if before, _, ok := strings.Cut(u, `,"_meta":{"claudeCode":{"toolName":"Edit","toolResponse"`); ok {
+			got = append(got, before)
+		} else if before, _, ok := strings.Cut(u, `,"_meta":{"claudeCode":{"toolName":"Write","toolResponse"`); ok {
+			got = append(got, before)
+		}
+	}
+	want := []string{
+		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"locations":[{"path":"/w/a.go","line":120}]`,
+		"tool_call_update {\"toolCallId\":\"toolu_w\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"Updated `/w/big.log` (previous content too large to diff)\"}}]",
+		`tool_call_update {"toolCallId":"toolu_s","content":[{"type":"diff","path":"/w/s.txt","oldText":"same","newText":"same"}]`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

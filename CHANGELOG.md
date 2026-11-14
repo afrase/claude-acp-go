@@ -9,6 +9,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: a tool's result shows the tool's own output where claude gives it (`tool_use_result`), as claude-agent-acp does, live and in a loaded session: a command's output without claude's wrapper for the model (output too long ends with where it was saved), a file read without claude's notes, a web search's hits as `Title (url)` lines, and a subagent's report.
 - `claudeacp`: a subagent's report loses claude's frame also when claude's notes come above it (a turn limit, output saved), and its `agentId: … (…)` line also when unframed; a turn limit's note shows as `[Agent stopped at its turn limit — the output below is partial]`. Only a trailing `<usage>` block is cut.
 - `claudeacp`: an approved ExitPlanMode call keeps showing the plan, retitled `Exited Plan Mode`, and a Skill call keeps its content, where claude's result text for the model replaced them; a refused plan's reason is unfenced in `rawOutput`.
+- `claudeacp`: an Edit's or Write's diffs from claude's response say the line each hunk starts at; a Write over a file whose response has no hunks shows the old text against the new, or says the old was too large to diff, where it showed a new file being created.
 
 ## v0.3.1 (2026-11-14)
 
