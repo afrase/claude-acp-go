@@ -18,6 +18,9 @@ func TestToClaude(t *testing.T) {
 	}{
 		{"text", []acp.ContentBlock{{Text: &acp.TextContent{Text: "hi"}}, {Text: &acp.TextContent{}}},
 			`[{"type":"text","text":"hi"}]`},
+		{"MCP prompts", []acp.ContentBlock{{Text: &acp.TextContent{Text: "/mcp:github:create_issue 42 now"}},
+			{Text: &acp.TextContent{Text: "/mcp:github:list"}}, {Text: &acp.TextContent{Text: "/mcp:github:x a\nb"}}, {Text: &acp.TextContent{Text: "say /mcp:a:b"}}},
+			`[{"type":"text","text":"/github:create_issue (MCP) 42 now"},{"type":"text","text":"/github:list (MCP)"},{"type":"text","text":"/mcp:github:x a\nb"},{"type":"text","text":"say /mcp:a:b"}]`},
 		{"links", []acp.ContentBlock{
 			{ResourceLink: &acp.ResourceLink{Name: "x", URI: "file:///repo/a%20b.go"}},
 			{ResourceLink: &acp.ResourceLink{Name: "y", URI: "https://example.com/p"}}},
