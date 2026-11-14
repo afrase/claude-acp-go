@@ -79,7 +79,7 @@ func TestCompaction(t *testing.T) {
 		`tool_call_update {"toolCallId":"c1","status":"completed","rawOutput":{"trigger":"manual","preTokens":900,"postTokens":80,"durationMs":1200},"_meta":{"claudeCode":{"toolName":"compact"}}}`,
 		`tool_call {"toolCallId":"c2","title":"Compact conversation","name":"compact","kind":"think","status":"in_progress","_meta":{"claudeCode":{"toolName":"compact"}}}`,
 		`tool_call_update {"toolCallId":"c2","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Compaction failed: too short"}}],"rawOutput":{"error":"too short"},"_meta":{"claudeCode":{"toolName":"compact"}}}`,
-		`tool_call {"toolCallId":"m1","title":"Recalled 2 memories","name":"memory_recall","kind":"read","status":"completed","rawOutput":[{"path":"a"},{"path":"b"}],"_meta":{"claudeCode":{"toolName":"memory_recall"}}}`,
+		`tool_call {"toolCallId":"m1","title":"Recalled 2 memories","name":"memory_recall","kind":"read","status":"completed","locations":[{"path":"a"},{"path":"b"}],"rawOutput":[{"path":"a"},{"path":"b"}],"_meta":{"claudeCode":{"toolName":"memory_recall","toolResponse":{}}}}`,
 	}
 	if got := p.toolUpdates(); !slices.Equal(got, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -329,5 +329,27 @@ func TestRefusalExplanation(t *testing.T) {
 		if got := p.texts(); !slices.Equal(got, want) {
 			t.Errorf("%s: %q", tc.name, got)
 		}
+	}
+}
+
+// Recalled memory files are the read's locations; a synthesized memory,
+// which no file holds, is its content.
+func TestMemoryRecall(t *testing.T) {
+	f := fake(user("id2"),
+		sendf(`{"type":"system","subtype":"memory_recall","uuid":"m1","mode":"select","memories":[{"path":"/memory/a.md","scope":"personal"},{"path":"/memory/b.md","scope":"team"}]}`),
+		sendf(`{"type":"system","subtype":"memory_recall","uuid":"m2","mode":"synthesize","memories":[{"path":"<synthesis:/x>","scope":"personal","content":"User prefers Go backends."}]}`),
+		result(""), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	want := []string{
+		`tool_call {"toolCallId":"m1","title":"Recalled 2 memories","name":"memory_recall","kind":"read","status":"completed","locations":[{"path":"/memory/a.md"},{"path":"/memory/b.md"}],` +
+			`"rawOutput":[{"path":"/memory/a.md","scope":"personal"},{"path":"/memory/b.md","scope":"team"}],"_meta":{"claudeCode":{"toolName":"memory_recall","toolResponse":{"mode":"select"}}}}`,
+		`tool_call {"toolCallId":"m2","title":"Recalled synthesized memory","name":"memory_recall","kind":"read","status":"completed","content":[{"type":"content","content":{"type":"text","text":"User prefers Go backends."}}],` +
+			`"rawOutput":[{"path":"\u003csynthesis:/x\u003e","scope":"personal","content":"User prefers Go backends."}],"_meta":{"claudeCode":{"toolName":"memory_recall","toolResponse":{"mode":"synthesize"}}}}`,
+	}
+	if got := p.toolUpdates(); !slices.Equal(got, want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

@@ -389,14 +389,34 @@ var (
 )
 
 // memoryRecall is the memories claude recalled for a turn, as a read
-// that has ended.
+// that has ended, as claude-agent-acp shows it: the memory files it
+// read, or what claude made of them (mode "synthesize"), which no file
+// holds.
 func (ts *tools) memoryRecall(m *claudeagent.MemoryRecall) {
-	var memories []json.RawMessage
-	title := "Recalled memory"
+	var memories []struct {
+		Path    string          `json:"path"`
+		Content json.RawMessage `json:"content"`
+	}
+	r := report{status: acp.ToolCallStatusCompleted, title: "Recalled memory", kind: acp.ToolKindRead, rawOutput: m.Memories}
+	r.response, _ = json.Marshal(struct {
+		Mode string `json:"mode,omitempty"`
+	}{m.Mode})
 	if json.Unmarshal(m.Memories, &memories) == nil {
-		title = "Recalled " + strconv.Itoa(len(memories)) + " memories"
+		r.title = "Recalled " + strconv.Itoa(len(memories)) + " memories"
 		if len(memories) == 1 {
-			title = "Recalled 1 memory"
+			r.title = "Recalled 1 memory"
+		}
+	}
+	if m.Mode == "synthesize" {
+		r.title = "Recalled synthesized memory"
+	}
+	for _, mem := range memories {
+		var text string
+		switch {
+		case m.Mode != "synthesize":
+			r.locations = append(r.locations, acp.ToolCallLocation{Path: mem.Path})
+		case json.Unmarshal(mem.Content, &text) == nil:
+			r.content = append(r.content, textContent(text))
 		}
 	}
 	id := m.UUID
@@ -405,8 +425,7 @@ func (ts *tools) memoryRecall(m *claudeagent.MemoryRecall) {
 	}
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	ts.sendLocked(&tool{id: id, name: "memory_recall", ended: true},
-		report{status: acp.ToolCallStatusCompleted, title: title, kind: acp.ToolKindRead, rawOutput: m.Memories})
+	ts.sendLocked(&tool{id: id, name: "memory_recall", ended: true}, r)
 }
 
 // localOutput is what a slash command claude ran itself printed (/context
