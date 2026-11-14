@@ -132,8 +132,13 @@ func (p *plan) result(b claudeagent.Block, structured json.RawMessage) bool {
 		if !ok {
 			return true
 		}
+		// The listing has no active forms: each task keeps the one it had.
+		was := p.tasks
 		p.tasks, p.order = map[string]*task{}, nil
 		for _, t := range tasks {
+			if old := was[t.ID]; old != nil && t.ActiveForm == "" {
+				t.ActiveForm = old.ActiveForm
+			}
 			p.tasks[t.ID] = &t
 			p.order = append(p.order, t.ID)
 		}

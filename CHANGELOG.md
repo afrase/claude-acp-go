@@ -20,6 +20,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: a refused turn's text is the refused response's own explanation whichever comes first, it or claude's no-fallback banner; the banner only stands in when the response gave none, and not for a turn no user started (`refused_user_message_uuid: null`), as in claude-agent-acp.
 - `claudeacp`: a memory recall's read links the memory files it read, and a synthesized one (mode `synthesize`) is titled `Recalled synthesized memory` with the memory's text as its content; `_meta.claudeCode.toolResponse` says the mode, as claude-agent-acp does.
 - `claudeacp`: an MCP server's prompt is offered as `mcp:server:prompt`, as claude-agent-acp names it, where claude's `server:prompt (MCP)` has a space; a prompt that starts `/mcp:server:prompt` goes to claude as `/server:prompt (MCP)`.
+- `claudeacp`: a TaskList keeps each task's active form, which the listing doesn't carry, so a task under way still reads `Running tests`, not `Run tests`.
 - `claudeagent` (API): `CompactBoundary.CompactMetadata` is a `*CompactMetadata`, nil when claude doesn't say, and its counts are pointers, nil when claude leaves them out.
 
 ## v0.3.1 (2026-11-14)

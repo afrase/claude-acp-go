@@ -91,7 +91,9 @@ func TestTaskPlan(t *testing.T) {
 		call("t5", "TaskGet", `{"taskId":"1"}`),
 		toolResult("t5", `"Task #1: A"`, ""),
 		call("t6", "TaskList", `{}`),
-		toolResult("t6", `[{"type":"text","text":"#1 [completed] A (main)\n#3 [pending] C [blocked by #1]"}]`, ""),
+		toolResult("t6", `[{"type":"text","text":"#1 [in_progress] A (main)\n#3 [pending] C [blocked by #1]"}]`, ""),
+		call("t7", "TaskList", `{}`),
+		toolResult("t7", `[{"type":"text","text":"#1 [completed] A (main)\n#3 [pending] C [blocked by #1]"}]`, ""),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
 	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
@@ -102,6 +104,7 @@ func TestTaskPlan(t *testing.T) {
 		"pending:A, pending:B",
 		"in_progress:Doing A, pending:B",
 		"in_progress:Doing A",
+		"in_progress:Doing A, pending:C", // a listing keeps each task's active form
 		"completed:A, pending:C",
 	}
 	if got := p.plans(); !slices.Equal(got, want) {
