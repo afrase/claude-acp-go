@@ -114,3 +114,26 @@ func TestTaskPlan(t *testing.T) {
 		t.Errorf("%q", got)
 	}
 }
+
+// A subagent's task tools change the session's tasks, which are shared,
+// and are shown as its own calls too.
+func TestSubagentTasks(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"t1","name":"TaskCreate","input":{"subject":"A"}}`),
+		toolResult("t1", `"Task #1 created successfully: A"`, ""),
+		assistant(`{"type":"tool_use","id":"t2","name":"TaskCreate","input":{"subject":"B"}}`),
+		toolResult("t2", `"Task #2 created successfully: B"`, ""),
+		claudetest.Send(`{"type":"assistant","parent_tool_use_id":"toolu_p","message":{"id":"msg_2","content":[{"type":"tool_use","id":"s1","name":"TaskUpdate","input":{"taskId":"2","status":"completed"}}]}}`),
+		sendf(`{"type":"user","parent_tool_use_id":"toolu_p","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"s1","content":"Updated task #2 status"}]}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	if got, want := p.plans(), []string{"pending:A", "pending:A, pending:B", "pending:A, completed:B"}; !slices.Equal(got, want) {
+		t.Errorf("plans\n%q\nwant\n%q", got, want)
+	}
+	if got := p.toolUpdates(); len(got) != 2 || !strings.Contains(got[0], `"toolCallId":"s1"`) || !strings.Contains(got[1], `"status":"completed"`) {
+		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}

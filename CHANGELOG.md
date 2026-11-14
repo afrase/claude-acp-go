@@ -21,6 +21,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: a memory recall's read links the memory files it read, and a synthesized one (mode `synthesize`) is titled `Recalled synthesized memory` with the memory's text as its content; `_meta.claudeCode.toolResponse` says the mode, as claude-agent-acp does.
 - `claudeacp`: an MCP server's prompt is offered as `mcp:server:prompt`, as claude-agent-acp names it, where claude's `server:prompt (MCP)` has a space; a prompt that starts `/mcp:server:prompt` goes to claude as `/server:prompt (MCP)`.
 - `claudeacp`: a TaskList keeps each task's active form, which the listing doesn't carry, so a task under way still reads `Running tests`, not `Run tests`.
+- `claudeacp`: a subagent's TaskCreate, TaskUpdate and TaskList change the session's plan too, live and in a loaded session, as the task list is the session's; they are still shown as the subagent's calls.
 - `claudeagent` (API): `CompactBoundary.CompactMetadata` is a `*CompactMetadata`, nil when claude doesn't say, and its counts are pointers, nil when claude leaves them out.
 
 ## v0.3.1 (2026-11-14)

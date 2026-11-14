@@ -265,6 +265,7 @@ func (s *session) assistant(m *claudeagent.Assistant) {
 			case isToolUse(b.Type) && isPlanTool(key, b.Name): // the main agent's plan, not a call
 				s.plan.input(b)
 			case isToolUse(b.Type):
+				s.plan.watch(key, b)
 				s.tools.input(key, b)
 			case strings.HasSuffix(b.Type, "_tool_result"): // a server tool's, which the API ran
 				s.tools.result(b, nil, nonExecution{})
