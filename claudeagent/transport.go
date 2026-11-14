@@ -243,7 +243,10 @@ func (t *transport) write(v any) error {
 		if t.inputClosed.Load() {
 			return ErrClosed
 		}
-		return fmt.Errorf("claudeagent: writing to claude: %w", err)
+		// A pipe to claude fails once claude has gone (EPIPE, or a
+		// closed pipe), and nothing more can reach it: the session is
+		// closed, and Wait says how claude ended.
+		return fmt.Errorf("%w: writing to claude: %w", ErrClosed, err)
 	}
 	return nil
 }

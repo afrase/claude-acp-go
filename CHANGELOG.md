@@ -15,6 +15,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - With `Options.Spawner` set, `CLIPath` goes to the Spawner as it is (`"claude"` when empty) instead of being looked up on PATH, so a fake or remote Spawner works where claude isn't installed.
 - With `Options.Log` set, claude's version is logged from its answer to initialize; no second `claude --version` process runs per session any more, and `CLAUDEAGENT_SKIP_VERSION` is gone.
 - New `claudeagent.ErrExitedBeforeInit`: `Start`'s error when claude ends before it answers initialize, whatever its exit code (with the `*ExitError` beside it for a non-zero one). `claudeacp` tells a vanished session by it rather than by the error's text.
+- A write to a claude that has exited is `ErrClosed` (wrapping the pipe's error), not a bare "broken pipe"; and `Start` against a claude that exits before initialize can be written still returns `ErrExitedBeforeInit` with the `*ExitError` and its stderr.
 
 ## v0.3.1 (2026-11-14)
 

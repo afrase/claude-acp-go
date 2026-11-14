@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -256,6 +259,48 @@ func TestStartFails(t *testing.T) {
 		})
 	}
 }
+
+// Writing to a claude that has exited, before anyone closed the session,
+// is ErrClosed, not the pipe's own error.
+func TestWriteAfterClaudeExited(t *testing.T) {
+	s, f := start(t, claudeagent.Options{}, claudetest.Exit(1, "out of memory\n"))
+	<-f.Exited()
+	if _, err := s.Send(context.Background(), claudeagent.UserInput{Text: "hi"}); !errors.Is(err, claudeagent.ErrClosed) {
+		t.Errorf("Send: %v", err)
+	}
+	var ee *claudeagent.ExitError
+	if err := s.Wait(); !errors.As(err, &ee) || ee.Code != 1 {
+		t.Errorf("Wait: %v", err)
+	}
+}
+
+// A claude that exits before initialize can even be written still fails
+// the start with how it ended.
+func TestStartClaudeGoneBeforeInitialize(t *testing.T) {
+	spawn := func(context.Context, claudeagent.Spec) (*claudeagent.Proc, error) {
+		return &claudeagent.Proc{
+			Stdin: brokenPipe{}, Stdout: io.NopCloser(strings.NewReader("")), Stderr: io.NopCloser(strings.NewReader("fatal: bad flag\n")),
+			Process: exited{&claudeagent.ExitError{Code: 2}},
+		}, nil
+	}
+	_, err := claudeagent.Start(context.Background(), claudeagent.Options{Env: []string{}, Spawner: spawn})
+	var ee *claudeagent.ExitError
+	if !errors.Is(err, claudeagent.ErrExitedBeforeInit) || !errors.As(err, &ee) || ee.Code != 2 || ee.Stderr != "fatal: bad flag" {
+		t.Errorf("%v", err)
+	}
+}
+
+// brokenPipe is the stdin of a claude that has gone.
+type brokenPipe struct{}
+
+func (brokenPipe) Write([]byte) (int, error) { return 0, syscall.EPIPE }
+func (brokenPipe) Close() error              { return nil }
+
+// exited is a claude that has exited with err.
+type exited struct{ err error }
+
+func (e exited) Wait() error          { return e.err }
+func (exited) Signal(os.Signal) error { return os.ErrProcessDone }
 
 // Has is the union of initialize's capabilities and every system/init's,
 // and agrees with a system/init by the time it is read.
