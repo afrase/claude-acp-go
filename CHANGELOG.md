@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: a prompt's answer has `_meta.quota` as claude-agent-acp's does: `token_count` (the turn's usage) and `model_usage`, a row per model of what the turn's results added to claude's running `modelUsage` (the session's first result gives its own usage under its model).
 - `claudeagent/sessions`: `Subagent` has `Name`, `AgentType` and `Description`, from its sidecar. `claudeacp` announces a subagent a SendMessage resumes after a restart with them, as claude-agent-acp does, where it had no title or description.
 - `claudeacp`: an ExitPlanMode call is titled `Approve Plan` and a Skill call `Load skill: <skill>`, as claude-agent-acp 0.94 titles them (they said `Plan ready` and `Skill <skill>`).
 - `claudeacp`: a fast mode change claude refused says "Claude didn't change fast mode: …", where it said "the fast".

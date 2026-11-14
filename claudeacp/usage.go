@@ -93,7 +93,7 @@ func (s *session) result(r *claudeagent.Result) {
 	if r.StopReason == "refusal" && s.st.refused != "" {
 		s.chunk("agent_message_chunk", "", r.UUID, acp.ContentBlock{Text: &acp.TextContent{Text: s.st.refused}})
 	}
-	end := ending{errorKind: s.st.errorKind, incomplete: incomplete,
+	end := ending{errorKind: s.st.errorKind, incomplete: incomplete, spent: s.st.resultSpend(r, s.st.model),
 		login: s.st.login || r.IsError && strings.Contains(r.Result, "Please run /login")}
 	s.st.local, s.st.refused, s.st.login, s.st.counted, s.st.errorKind = false, "", false, false, ""
 	clear(s.st.noticed)

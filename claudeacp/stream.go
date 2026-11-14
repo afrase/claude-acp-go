@@ -23,6 +23,7 @@ type stream struct {
 	refused   string               // why the model refused, this turn
 	noticed   map[string]bool      // tool uses a notice was sent for, this turn
 	login     bool                 // claude said it isn't signed in, this turn
+	lastSpend spend                // the last result's modelUsage; nil before the first
 }
 
 // streamed is a message being written: its API id, the text and thinking

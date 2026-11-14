@@ -1,6 +1,7 @@
 package claudeacp
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -85,5 +86,41 @@ func TestRateLimitUsage(t *testing.T) {
 	}
 	if want := []string{"used", "limit", "used"}; !slices.Equal(got, want) {
 		t.Errorf("%s", strings.Join(got, ", "))
+	}
+}
+
+// A prompt's answer says what its turn spent under _meta.quota, as
+// claude-agent-acp's does: its usage, and by model what its result added
+// to claude's running modelUsage (the session's first result, which may
+// count a resumed session's history, gives its own usage under its
+// model).
+func TestQuota(t *testing.T) {
+	g := gates(1)
+	f := fake(user("id2"), echo("id2"),
+		event(`{"type":"message_start","message":{"id":"msg_1","model":"claude-opus-5-5","usage":{"input_tokens":3}}}`),
+		result(names("id2")+`,"modelUsage":{"claude-opus-5-5":{"inputTokens":900,"outputTokens":90}}`),
+		claudetest.Send(idle), signal(g[0]),
+		user("id3"), echo("id3"),
+		result(names("id3")+`,"modelUsage":{"claude-opus-5-5":{"inputTokens":910,"outputTokens":95},"claude-haiku-4-5":{"inputTokens":7,"cacheReadInputTokens":2}}`),
+		claudetest.Send(idle))
+	p := start(t, nil, f)
+	sid := p.open(t)
+	quota := func(text string) string {
+		r, err := p.prompt(t, sid, text)()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(r.Meta["quota"])
+		return string(b)
+	}
+	if got, want := quota("one"), `{"model_usage":[{"model":"claude-opus-5-5","token_count":{"cachedInputTokens":0,"cachedWriteTokens":0,"inputTokens":3,"outputTokens":4,"reasoningOutputTokens":0,"totalTokens":7}}],`+
+		`"token_count":{"cachedInputTokens":0,"cachedWriteTokens":0,"inputTokens":3,"outputTokens":4,"reasoningOutputTokens":0,"totalTokens":7}}`; got != want {
+		t.Errorf("one:\n%s\nwant\n%s", got, want)
+	}
+	wait(t, g[0], "one's idle")
+	if got, want := quota("two"), `{"model_usage":[{"model":"claude-haiku-4-5","token_count":{"cachedInputTokens":2,"cachedWriteTokens":0,"inputTokens":7,"outputTokens":0,"reasoningOutputTokens":0,"totalTokens":9}},`+
+		`{"model":"claude-opus-5-5","token_count":{"cachedInputTokens":0,"cachedWriteTokens":0,"inputTokens":10,"outputTokens":5,"reasoningOutputTokens":0,"totalTokens":15}}],`+
+		`"token_count":{"cachedInputTokens":0,"cachedWriteTokens":0,"inputTokens":3,"outputTokens":4,"reasoningOutputTokens":0,"totalTokens":7}}`; got != want {
+		t.Errorf("two:\n%s\nwant\n%s", got, want)
 	}
 }

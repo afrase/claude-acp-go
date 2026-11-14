@@ -30,6 +30,7 @@ type turn struct {
 	textSent  bool     // text reached the client during it
 	notices   []string // what the notices sent during it said (noticeText)
 	usage     claudeagent.Usage
+	models    spend // what its results added by model
 
 	done    chan outcome // its answer, once
 	settled bool
@@ -56,7 +57,7 @@ func (t *turn) answer(r acp.StopReason) outcome {
 		InputTokens: uint64(u.InputTokens), OutputTokens: uint64(u.OutputTokens), //nolint:gosec // token counts
 		CachedReadTokens: &read, CachedWriteTokens: &write,
 		TotalTokens: uint64(u.InputTokens+u.OutputTokens) + read + write, //nolint:gosec // token counts
-	}}}
+	}, Meta: quotaMeta(u, t.models)}}
 }
 
 func cancelled(t *turn) outcome { return t.answer(acp.StopReasonCancelled) }
@@ -169,6 +170,7 @@ type ending struct {
 	errorKind  string // the API error its last top-level message named
 	incomplete bool   // a tool it ran gave no result
 	login      bool   // claude isn't signed in
+	spent      spend  // what the result added by model
 }
 
 // resultLocked ends the turn r ends, with r's stop reason; the prompts
@@ -187,6 +189,7 @@ func (s *session) resultLocked(r *claudeagent.Result, end ending) {
 		s.activateLocked(t)
 	}
 	t.usage = addUsage(t.usage, r.Usage)
+	t.models = t.models.add(end.spent)
 	t.sawResult = true
 	for _, id := range ids {
 		delete(t.steers, id)
