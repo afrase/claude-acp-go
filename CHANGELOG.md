@@ -2,6 +2,10 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## Unreleased
+
+- `claudeacp`: without subagent sessions, a subagent that ended and runs again (a SendMessage, a new start, a running update) counts as running: its next end ends the calls that run left open, and a cancel of the turn spares it while it is in the background.
+
 ## v0.3.1 (2026-11-14)
 
 - Needs Go 1.27.4, which fixes GO-2026-6859 in `net/http`. `go install` then builds with the fixed standard library.

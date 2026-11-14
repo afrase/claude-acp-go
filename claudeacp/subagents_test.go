@@ -340,6 +340,64 @@ func TestSubagentAgain(t *testing.T) {
 	}
 }
 
+// Without subagent sessions, a subagent that ended runs again all the
+// same: the end of its next run ends the calls that run left open, and a
+// cancel of the turn spares it while it is in the background.
+func TestSubagentAgainWithoutSessions(t *testing.T) {
+	before := []claudetest.Step{user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), agentDone,
+		taskEnd("completed"),
+		assistant(`{"type":"tool_use","id":"toolu_m","name":"SendMessage","input":{"to":"a1","message":"count again"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m","content":"sent"}]},` +
+			`"tool_use_result":{"success":true,"resumedAgentId":"a1"}}`),
+	}
+	t.Run("its next end", func(t *testing.T) {
+		steps := append(slices.Clone(before), subagentCall("toolu_m", "toolu_2"),
+			sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_m","status":"stopped"}`),
+			result(names("id2")), claudetest.Send(idle))
+		p := start(t, nil, fake(steps...))
+		sid := p.open(t)
+		if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+			t.Fatal(got)
+		}
+		got := shape(p.notes(), sid)
+		want := []string{"s1 call toolu_2 Bash pending parent=toolu_m", "s1 update toolu_2 failed parent=toolu_m", "s1 usage human"}
+		if i := slices.Index(got, want[0]); i < 0 || !slices.Equal(got[i:], want) {
+			t.Errorf("got:\n%s\nwant at its end:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	})
+	t.Run("the turn cancelled", func(t *testing.T) {
+		opened, release := make(chan struct{}), make(chan struct{})
+		steps := append(slices.Clone(before), canUseTool("toolu_s", "Bash", `{"command":"ls"}`, `,"agent_id":"a1"`),
+			claudetest.Until(release), result(names("id2")), claudetest.Send(idle),
+			answers("toolu_s", `{"behavior":"allow"}`))
+		f := fake(steps...)
+		p := start(t, nil, f)
+		withdrawn := make(chan bool, 1)
+		p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+			close(opened)
+			<-release
+			withdrawn <- ctx.Err() != nil
+			return pick(optAllowOnce)(ctx, req)
+		}
+		sid := p.open(t)
+		w := p.prompt(t, sid, "go")
+		wait(t, opened, "the request")
+		if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: sid}); err != nil {
+			t.Fatal(err)
+		}
+		// The interrupt goes after the withdrawal, which then has had time
+		// to reach the client.
+		eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
+		close(release)
+		if got := stopReason(w); got != "cancelled" {
+			t.Fatal(got)
+		}
+		if <-withdrawn {
+			t.Error("the turn's cancel withdrew a resumed background subagent's request")
+		}
+	})
+}
+
 // When claude exits, a subagent still running ends with no reason given.
 func TestSubagentsGone(t *testing.T) {
 	p := start(t, withSubagents, fake(user("id2"), echo("id2"), agentCall(true), taskStarted(""), agentDone,

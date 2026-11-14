@@ -232,11 +232,15 @@ func (k *subagents) againLocked(sa *subagent, call, prompt string) {
 		sa.call = call
 		k.byCall[call] = sa
 	}
+	// It runs again whether or not the client sees it: its next end must
+	// count, and a cancel of the turn must spare it if it is in the
+	// background.
+	wasEnded := sa.ended
+	sa.ended = false
 	if !sa.shown {
 		return
 	}
-	if sa.ended {
-		sa.ended = false
+	if wasEnded {
 		k.childStateLocked(sa, acp.StateUpdate{Running: &acp.RunningStateUpdate{}})
 	}
 	if fresh {
