@@ -83,6 +83,7 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	}
 	unlock := a.opening(id)
 	defer unlock()
+	a.waitClosed(id) // a claude still ending would write over the one resuming it
 	s, err := a.session(acp.SessionID(id))
 	open := err == nil
 	var t *sessions.Transcript
@@ -144,6 +145,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		return nil, err
 	}
 	id := string(req.SessionID)
+	a.waitClosed(id) // its transcript is whole once claude has exited
 	var from string // the folder whose history has the session: the open one's, else any
 	if s, err := a.session(req.SessionID); err == nil {
 		from = s.cwd

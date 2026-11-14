@@ -12,6 +12,7 @@ import (
 
 	acp "github.com/afrase/acp-go/unstable"
 
+	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
 	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
@@ -94,4 +95,39 @@ func TestDeleteSession(t *testing.T) {
 	if got := p.replayed(); !slices.Contains(got, sid+" commands") {
 		t.Errorf("%q", got)
 	}
+}
+
+// A delete of a session that is closing waits for its claude to exit:
+// claude writes its transcript as it ends.
+func TestDeleteWhileClosing(t *testing.T) {
+	taken, release := make(chan struct{}), make(chan struct{})
+	f := fake(user("id2"), echo("id2"), signal(taken), claudetest.Until(release))
+	p := start(t, nil, f)
+	sid := p.open(t)
+	_ = p.prompt(t, sid, "go")
+	wait(t, taken, "the prompt taken")
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_, _ = p.CloseSession(context.Background(), &acp.CloseSessionRequest{SessionID: sid})
+	}()
+	eventually(t, "the close under way", func() bool { _, err := p.agent.session(sid); return err != nil })
+	deleted := make(chan struct{})
+	go func() {
+		defer close(deleted)
+		_, _ = p.DeleteSession(context.Background(), &acp.DeleteSessionRequest{SessionID: sid})
+	}()
+	select {
+	case <-deleted:
+		t.Error("deleted while claude still ran")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	wait(t, deleted, "the delete")
+	select {
+	case <-f.Exited():
+	default:
+		t.Error("deleted before claude exited")
+	}
+	wait(t, closed, "the close")
 }

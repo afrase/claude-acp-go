@@ -64,14 +64,18 @@ func listTitle(s string) string {
 
 // DeleteSession deletes a session's transcripts for good. An open one is
 // closed first, and claude has exited before its files go, since claude
-// writes to its transcript as it ends. One claude has no transcript of
-// is deleted already.
+// writes to its transcript as it ends: one closing already is waited
+// for, and a load of it runs before or after, not beside. One claude has
+// no transcript of is deleted already.
 //
 //nolint:contextcheck // closing runs to its end: the request's ctx doesn't bound it
 func (a *agent) DeleteSession(_ context.Context, req *acp.DeleteSessionRequest) (*acp.DeleteSessionResponse, error) {
+	unlock := a.opening(string(req.SessionID))
+	defer unlock()
 	if s, err := a.session(req.SessionID); err == nil {
 		s.close()
 	}
+	a.waitClosed(string(req.SessionID))
 	store := sessions.Store{ConfigDir: a.cfg.ConfigDir}
 	if err := store.Delete(string(req.SessionID), ""); err != nil {
 		return nil, &acp.Error{Code: acp.ErrorCodeInternalError, Message: fmt.Sprintf("Deleting the session: %v", err)}

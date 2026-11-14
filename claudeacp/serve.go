@@ -57,7 +57,8 @@ type agent struct {
 	mu        sync.Mutex
 	caps      clientCaps
 	sessions  map[string]*session
-	reopening map[string]*reopener // by session id: one load or resume of each at a time
+	reopening map[string]*reopener     // by session id: one load or resume of each at a time
+	closing   map[string]chan struct{} // by session id: closed once its close is done
 
 	windows windows // the context windows results have said (window.go)
 }
@@ -193,6 +194,43 @@ func (a *agent) forget(s *session) {
 	defer a.mu.Unlock()
 	if a.sessions[s.id] == s {
 		delete(a.sessions, s.id)
+	}
+}
+
+// closingStart removes s from the open sessions as its close starts: its
+// id is closing, and waitClosed waits until done says the close is done
+// (claude has exited).
+func (a *agent) closingStart(s *session) (done func()) {
+	ch := make(chan struct{})
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sessions[s.id] == s {
+		delete(a.sessions, s.id)
+	}
+	if a.closing == nil {
+		a.closing = map[string]chan struct{}{}
+	}
+	if a.closing[s.id] != nil {
+		return func() {} // a close of it is under way: it says when done
+	}
+	a.closing[s.id] = ch
+	return func() {
+		a.mu.Lock()
+		delete(a.closing, s.id)
+		a.mu.Unlock()
+		close(ch)
+	}
+}
+
+// waitClosed waits until no close of session id is under way, so what
+// comes next (a delete of its files, a claude resuming it) doesn't meet
+// a claude still writing its transcript as it ends.
+func (a *agent) waitClosed(id string) {
+	a.mu.Lock()
+	ch := a.closing[id]
+	a.mu.Unlock()
+	if ch != nil {
+		<-ch
 	}
 }
 
