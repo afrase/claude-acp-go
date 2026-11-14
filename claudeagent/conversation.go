@@ -34,15 +34,15 @@ type User struct {
 	} `json:"message"`
 	ParentToolUseID string          `json:"parent_tool_use_id"`
 	ToolUseResult   json.RawMessage `json:"tool_use_result"` // the tool's structured output
+	IsReplay        bool            `json:"isReplay"`
+	IsSynthetic     bool            `json:"isSynthetic"`
+	Origin          *Origin         `json:"origin"`
+	Timestamp       string          `json:"timestamp"`
 	// ToolResultMeta says, as claude sent it, why results that aren't a
 	// tool's output aren't: [{id, non_execution_kind, user_feedback}],
 	// the kind "user-rejected", "permission-rule", "interrupted",
 	// "cancelled" or "automode-…".
 	ToolResultMeta json.RawMessage `json:"tool_result_meta"`
-	IsReplay       bool            `json:"isReplay"`
-	IsSynthetic    bool            `json:"isSynthetic"`
-	Origin         *Origin         `json:"origin"`
-	Timestamp      string          `json:"timestamp"`
 }
 
 // Result ends a turn. Its cost and ModelUsage count the whole session so
