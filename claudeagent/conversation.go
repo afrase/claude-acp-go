@@ -38,6 +38,11 @@ type User struct {
 	IsSynthetic     bool            `json:"isSynthetic"`
 	Origin          *Origin         `json:"origin"`
 	Timestamp       string          `json:"timestamp"`
+	// ToolResultMeta says, as claude sent it, why results that aren't a
+	// tool's output aren't: [{id, non_execution_kind, user_feedback}],
+	// the kind "user-rejected", "permission-rule", "interrupted",
+	// "cancelled" or "automode-…".
+	ToolResultMeta json.RawMessage `json:"tool_result_meta"`
 }
 
 // Result ends a turn. Its cost and ModelUsage count the whole session so
@@ -117,6 +122,12 @@ type ToolProgress struct {
 	ParentToolUseID    string  `json:"parent_tool_use_id"`
 	ElapsedTimeSeconds float64 `json:"elapsed_time_seconds"`
 	TaskID             string  `json:"task_id"`
+	// SubagentType is an Agent call's subagent's type, and SubagentRetry
+	// claude's retries of its API requests (agent_id, attempt,
+	// max_retries, retry_delay_ms, error_status, error_category), while
+	// a rate limit holds it.
+	SubagentType  string          `json:"subagent_type"`
+	SubagentRetry json.RawMessage `json:"subagent_retry"`
 }
 
 // RateLimit is the account's rate limit state; Info is claude's

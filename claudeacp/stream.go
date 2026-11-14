@@ -1,7 +1,6 @@
 package claudeacp
 
 import (
-	"cmp"
 	"encoding/json"
 	"strings"
 
@@ -22,6 +21,7 @@ type stream struct {
 	counted   bool                 // a top-level message said its counts, this turn
 	local     bool                 // a slash command claude ran itself printed, this turn
 	refused   string               // why the model refused, this turn
+	noticed   map[string]bool      // tool uses a notice was sent for, this turn
 	login     bool                 // claude said it isn't signed in, this turn
 }
 
@@ -33,7 +33,7 @@ type streamed struct {
 	done   int
 }
 
-func (st *stream) init() { st.msgs = map[string]*streamed{} }
+func (st *stream) init() { st.msgs, st.noticed = map[string]*streamed{}, map[string]bool{} }
 
 // handle maps one of claude's messages: to updates, and to turns'
 // starts and ends.
@@ -46,7 +46,7 @@ func (s *session) handle(m claudeagent.Message) {
 	case *claudeagent.User:
 		s.user(m)
 	case *claudeagent.ToolProgress:
-		s.tools.progress(m.ToolUseID)
+		s.tools.progress(m)
 	case *claudeagent.PermissionDenied:
 		s.tools.denied(m)
 	case *claudeagent.Result:
@@ -74,11 +74,11 @@ func (s *session) handle(m claudeagent.Message) {
 			s.tools.compactEnded(m.CompactResult, m.CompactError)
 		}
 	case *claudeagent.Informational:
-		s.notice(m.Level, m.Content)
+		s.notice(m)
 	case *claudeagent.ModelRefusalFallback:
 		s.modelFallback(m)
 	case *claudeagent.ModelRefusalNoFallback:
-		s.refusal(nil, cmp.Or(m.APIRefusalExplanation, m.Content))
+		s.refusedNoFallback(m)
 	case *claudeagent.MemoryRecall:
 		s.tools.memoryRecall(m)
 	case *claudeagent.LocalCommandOutput:
@@ -87,8 +87,8 @@ func (s *session) handle(m claudeagent.Message) {
 		s.elicitationDone(m)
 	case *claudeagent.CompactBoundary:
 		s.tools.compacted(m)
-		if post := m.CompactMetadata.PostTokens; post > 0 {
-			s.st.used = post
+		if c := m.CompactMetadata; c != nil && c.PostTokens != nil && *c.PostTokens > 0 {
+			s.st.used = *c.PostTokens
 			s.usage(nil, nil)
 		}
 	case *claudeagent.TaskStarted:
@@ -104,6 +104,7 @@ func (s *session) handle(m claudeagent.Message) {
 
 // user is a user message: tools' results, or the echo of a prompt.
 func (s *session) user(m *claudeagent.User) {
+	why := nonExecutions(m.ToolResultMeta)
 	for _, b := range m.Message.Content {
 		if b.Type != "tool_result" {
 			continue
@@ -113,7 +114,7 @@ func (s *session) user(m *claudeagent.User) {
 			structured = m.ToolUseResult
 		}
 		if !s.plan.result(b, structured) {
-			s.tools.result(b)
+			s.tools.result(b, structured, why[b.ToolUseID])
 		}
 		s.resumed(b.ToolUseID, structured)
 	}
@@ -264,9 +265,10 @@ func (s *session) assistant(m *claudeagent.Assistant) {
 			case isToolUse(b.Type) && isPlanTool(key, b.Name): // the main agent's plan, not a call
 				s.plan.input(b)
 			case isToolUse(b.Type):
+				s.plan.watch(key, b)
 				s.tools.input(key, b)
 			case strings.HasSuffix(b.Type, "_tool_result"): // a server tool's, which the API ran
-				s.tools.result(b)
+				s.tools.result(b, nil, nonExecution{})
 			}
 		}
 	}

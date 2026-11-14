@@ -2,6 +2,8 @@ package claudeacp
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -18,12 +20,18 @@ func TestToolView(t *testing.T) {
 		{"Bash", `{"command":"ls -a","description":"List files"}`,
 			`{"title":"ls -a","kind":"execute","content":[{"type":"content","content":{"type":"text","text":"List files"}}]}`},
 		{"Bash", `{}`, `{"title":"Terminal","kind":"execute"}`},
+		{"Bash", `{"command":"ls","command_description":"List"}`,
+			`{"title":"ls","kind":"execute","content":[{"type":"content","content":{"type":"text","text":"List"}}]}`},
 		{"Read", `{"file_path":"/w/src/a.go","offset":10,"limit":5}`,
 			`{"title":"Read src/a.go (10 - 14)","kind":"read","locations":[{"path":"/w/src/a.go","line":10}]}`},
 		{"Read", `{"file_path":"/elsewhere/b.go","offset":3}`,
 			`{"title":"Read /elsewhere/b.go (from line 3)","kind":"read","locations":[{"path":"/elsewhere/b.go","line":3}]}`},
 		{"Read", `{}`, `{"title":"Read","kind":"read"}`},
 		{"Write", `{"file_path":"/w/n.txt","content":"hi"}`,
+			`{"title":"Write n.txt","kind":"edit","content":[{"type":"diff","path":"/w/n.txt","newText":"hi"}],"locations":[{"path":"/w/n.txt"}]}`},
+		{"Write", `{"file_path":"/w/n.txt","file_text":"hi"}`,
+			`{"title":"Write n.txt","kind":"edit","content":[{"type":"diff","path":"/w/n.txt","newText":"hi"}],"locations":[{"path":"/w/n.txt"}]}`},
+		{"Write", `{"file_path":"/w/n.txt","file_content":"hi"}`,
 			`{"title":"Write n.txt","kind":"edit","content":[{"type":"diff","path":"/w/n.txt","newText":"hi"}],"locations":[{"path":"/w/n.txt"}]}`},
 		{"Edit", `{"file_path":"/w/a.go"}`,
 			`{"title":"Edit a.go","kind":"edit","content":[{"type":"diff","path":"/w/a.go","newText":""}],"locations":[{"path":"/w/a.go"}]}`},
@@ -77,20 +85,141 @@ func TestResultContent(t *testing.T) {
 		{"mcp__s__t", `[{"type":"text","text":"has ` + "```" + ` in it"}]`, true, "````\nhas ``` in it\n````"},
 		{"ToolSearch", `[{"type":"tool_reference","tool_name":"SendMessage"},{"type":"tool_reference","tool_name":"TaskStop"}]`, false, "Tool: SendMessage\n\nTool: TaskStop"},
 		{"mcp__s__t", `[{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "image image/png"},
+		// A Read of an image or a PDF shows the image, or a line for the
+		// document; a command's image output shows too.
+		{"Read", `[{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "image image/png"},
+		{"Read", `[{"type":"text","text":"PDF file read"},{"type":"document","title":"Spec","source":{"type":"base64","media_type":"application/pdf","data":"` + strings.Repeat("A", 2800) + `"}}]`, false,
+			"```\nPDF file read\n```" + ` + [document "Spec": application/pdf, 2.1 KB]`},
+		{"Read", `[{"type":"document","source":{"type":"url","url":"https://x/a.pdf"}}]`, false, "[document: https://x/a.pdf]"},
+		{"Bash", `[{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "image image/png"},
+		{"Bash", `[{"type":"text","text":"hi"},{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "hi + image image/png"},
+		{"mcp__s__t", `[{"type":"image","source":{"type":"url","url":"https://x/a.png"}}]`, false, "[image: https://x/a.png]"},
+		// An API server tool's result says what it found.
+		{"web_search", `[{"type":"web_search_result","title":"Go","url":"https://go.dev"},{"type":"web_search_result","title":"ACP","url":"https://acp.dev"}]`, false,
+			"Go (https://go.dev) + ACP (https://acp.dev)"},
+		{"web_search", `{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}`, false, "Error: max_uses_exceeded"},
+		{"web_fetch", `{"type":"web_fetch_result","url":"https://go.dev","content":{"type":"document"}}`, false, "Fetched: https://go.dev"},
+		{"tool_search_tool_regex", `{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"x"},{"type":"tool_reference","tool_name":"y"}]}`, false,
+			"Tools found: x, y"},
+		{"tool_search_tool_regex", `{"type":"tool_search_tool_result_error","error_code":"unavailable","error_message":"down"}`, false, "Error: unavailable - down"},
+		{"code_execution", `{"type":"bash_code_execution_result","stdout":"","stderr":"oops","return_code":1}`, false, "Output: oops"},
 	} {
-		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError})
+		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError}, nil)
 		got := "-"
-		switch {
-		case !ok:
-		case len(content) == 1 && content[0].Content.Content.Text != nil:
-			got = content[0].Content.Content.Text.Text
-		case len(content) == 1 && content[0].Content.Content.Image != nil:
-			got = "image " + content[0].Content.Content.Image.MimeType
-		default:
-			got = "?"
+		if ok {
+			var parts []string
+			for _, c := range content {
+				switch {
+				case c.Content == nil:
+					parts = append(parts, "?")
+				case c.Content.Content.Text != nil:
+					parts = append(parts, c.Content.Content.Text.Text)
+				case c.Content.Content.Image != nil:
+					parts = append(parts, "image "+c.Content.Content.Image.MimeType)
+				default:
+					parts = append(parts, "?")
+				}
+			}
+			got = strings.Join(parts, " + ")
 		}
 		if got != tc.want {
 			t.Errorf("%s %s: %q, want %q", tc.name, tc.result, got, tc.want)
 		}
+	}
+}
+
+// A result shows the tool's own output where claude gave it, as
+// claude-agent-acp does: a command's output without claude's wrapper for
+// the model, a file without its reminders, the hits of a web search and a
+// subagent's report; else the text claude gave the model.
+func TestResultFromStructured(t *testing.T) {
+	persisted := `"<persisted-output>\nOutput too large (40KB). Full output saved to: /tmp/x.txt\n\nPreview (first 2KB):\nabc\n</persisted-output>"`
+	for _, tc := range []struct {
+		name, result, structured string
+		isError                  bool
+		want                     string // "-" leaves the content
+	}{
+		{"Bash", persisted, `{"stdout":"abc","stderr":"","interrupted":false,"persistedOutputPath":"/tmp/x.txt","persistedOutputSize":40960}`, false,
+			"```console\nabc\n[Output truncated (40960 bytes total): full output saved to /tmp/x.txt]\n```"},
+		{"Bash", `"out\nerr\n(hint for the model)"`, `{"stdout":"out\n","stderr":"err","interrupted":true}`, false,
+			"```console\nout\n\nerr\n[Command was aborted before completion]\n```"},
+		{"Bash", `""`, `{"stdout":"","stderr":"","interrupted":false}`, false, "-"},
+		{"Bash", `"Command running in background with ID: b1"`, `{"stdout":"","stderr":"","backgroundTaskId":"b1"}`, false,
+			"```console\nCommand running in background with ID: b1\n```"},
+		{"Bash", `"Exit code 1\nboom"`, `{"stdout":"","stderr":"boom"}`, true, "```\nExit code 1\nboom\n```"}, // a failure shows claude's text
+		{"Read", `"     5\ta\n     6\tb\n<system-reminder>r</system-reminder>"`, `{"type":"text","file":{"filePath":"/w/a","content":"a\nb\n","startLine":5,"numLines":2,"totalLines":9}}`, false,
+			"```\n5\ta\n6\tb\n```"},
+		{"Read", `"     1\ta\n[truncated]"`, `{"type":"text","file":{"content":"a","startLine":1,"numLines":1,"totalLines":3,"truncatedByTokenCap":true}}`, false,
+			"```\n1\ta\n[File truncated: showing 1 of 3 lines]\n```"},
+		{"Read", `"x"`, `{"type":"text","file":{"content":"","startLine":1}}`, false, "```\nx\n```"}, // an empty file keeps claude's note
+		{"WebSearch", `"Web search results for query: \"acp\"\n\nLinks: [{\"title\":\"A\",\"url\":\"https://a\"}]"`,
+			`{"query":"acp","results":[{"tool_use_id":"s1","content":[{"title":"A","url":"https://a"},{"title":"B","url":"https://b"}]},"A summary.",{"content":[{"title":7}]}]}`, false,
+			"A (https://a)\nB (https://b)\nA summary."},
+		{"WebSearch", `"raw"`, `{"results":[]}`, false, "raw"},
+		{"Agent", `[{"type":"text","text":"[Subagent hand-back] Frame. The report follows:\n  Done.\nagentId: a1 (use SendMessage to continue)"}]`,
+			`{"status":"completed","agentId":"a1","content":[{"type":"text","text":"Done."}]}`, false, "Done."},
+		{"Agent", `[{"type":"text","text":"Raw."}]`, `{"status":"completed","content":[]}`, false, "Raw."},
+		{"Bash", `"a"`, `[1]`, false, "```console\na\n```"}, // not an object: the text
+	} {
+		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError}, json.RawMessage(tc.structured))
+		got := "-"
+		if ok {
+			got = "?"
+			if len(content) == 1 && content[0].Content != nil && content[0].Content.Content.Text != nil {
+				got = content[0].Content.Content.Text.Text
+			}
+		}
+		if got != tc.want {
+			t.Errorf("%s %s: %q, want %q", tc.name, tc.structured, got, tc.want)
+		}
+	}
+}
+
+// A subagent's report shows without claude's frame and trailer wherever
+// they are: notes above the frame lead the report, a turn limit's as a
+// label; an unframed report loses its agentId line; only a trailing
+// <usage> block goes.
+func TestHandedBack(t *testing.T) {
+	frame := "[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n"
+	for _, tc := range []struct{ in, want string }{
+		{"  NOTE: this agent stopped at its 5-turn limit before finishing. Send it a message (SendMessage) to go on.\n" + frame +
+			"  Line one.\n\n  Line two.\nagentId: a1 (use SendMessage to continue)\n<usage>tokens: 5</usage>",
+			"[Agent stopped at its turn limit — the output below is partial]\n\nLine one.\n\nLine two."},
+		{"  Output saved to /tmp/x\n" + frame + "  Line one.\nagentId: a1 (use SendMessage to continue)", "Output saved to /tmp/x\n\nLine one."},
+		{"Done.\nagentId: a1 (use SendMessage with to: 'a1' to continue this agent)", "Done."},
+		{"Done.\nagentId: a1\n<usage>x</usage>", "Done.\nagentId: a1"}, // no "(…)": not claude's line
+		{"Use <usage>a</usage> tags.\n<usage>tokens: 5</usage>", "Use <usage>a</usage> tags."},
+		{"NOTE: this agent stopped at its 3-turn limit before finishing.", "[Agent stopped at its turn limit — the output below is partial]"},
+		{"Says [Subagent hand-back] The report follows:\nno frame", "Says [Subagent hand-back] The report follows:\nno frame"},
+	} {
+		content, _ := resultContent("Agent", claudeagent.Block{Content: json.RawMessage(strconv.Quote(tc.in))}, nil)
+		if len(content) != 1 || content[0].Content.Content.Text.Text != tc.want {
+			b, _ := json.Marshal(content)
+			t.Errorf("%q:\n%s\nwant %q", tc.in, b, tc.want)
+		}
+	}
+	content, _ := resultContent("Agent", claudeagent.Block{Content: json.RawMessage(`"raw"`)},
+		json.RawMessage(`{"status":"completed","content":[{"type":"text","text":"NOTE: this agent stopped at its 5-turn limit before finishing. Go on.\n\nPartial."}]}`))
+	if len(content) != 1 || content[0].Content.Content.Text.Text != "[Agent stopped at its turn limit — the output below is partial]\n\nPartial." {
+		b, _ := json.Marshal(content)
+		t.Errorf("%s", b)
+	}
+}
+
+// An approved plan's call keeps the plan, titled as having exited plan
+// mode, and a loaded skill's keeps its content: claude's result text is
+// for the model. A refused plan's reason is unfenced in rawOutput.
+func TestPlanAndSkillResults(t *testing.T) {
+	r := resultReport("ExitPlanMode", claudeagent.Block{Content: json.RawMessage(`"User has approved your plan. You can now start coding."`)}, nil)
+	if r.title != "Exited Plan Mode" || r.content != nil || r.status != acp.ToolCallStatusCompleted {
+		t.Errorf("%+v", r)
+	}
+	r = resultReport("Skill", claudeagent.Block{Content: json.RawMessage(`"Launching skill: pdf"`)}, nil)
+	if r.title != "" || r.content != nil {
+		t.Errorf("%+v", r)
+	}
+	r = resultReport("ExitPlanMode", claudeagent.Block{IsError: true, Content: json.RawMessage(`"` + "```\\nNot yet: add tests.\\n```" + `"`)}, nil)
+	if string(r.rawOutput) != `"Not yet: add tests."` || r.title != "" || r.status != acp.ToolCallStatusFailed {
+		t.Errorf("%+v %s", r, r.rawOutput)
 	}
 }

@@ -24,6 +24,7 @@ type tool struct {
 	fields   int  // top-level fields of its input sent as it streamed
 	whole    bool // its input came whole: claude runs it (or asks first)
 	ended    bool
+	denied   bool   // claude refused it without asking: its result, to come, adds only rawOutput
 	shown    bool   // the client has its tool_call
 	last     report // each field as the client last had it
 }
@@ -40,6 +41,16 @@ type tools struct {
 	byID      map[string]*tool
 	streaming map[string]map[int]*tool // by stream (the parent's id; "" at the top) and block index
 	compact   *tool                    // a compaction running
+	// compactUpdates says compactions go as ACP's compaction updates (the
+	// client declared them), not as a call; summary is the next one's,
+	// from claude's PostCompact hook.
+	compactUpdates bool
+	summary        string
+	// compactShown says the turn showed a compaction, whose result's text
+	// isn't shown again; failure is why one failed, which claude says
+	// again as a command's output.
+	compactShown bool
+	failure      string
 	// early are hooks' reports that came before the reader had the call's
 	// whole input (claude's requests and its messages are read apart),
 	// by the call's id; each goes once the input has.
@@ -74,6 +85,7 @@ type report struct {
 	locations           []acp.ToolCallLocation
 	rawInput, rawOutput json.RawMessage
 	response            json.RawMessage // _meta.claudeCode.toolResponse: the tool's whole response, when known
+	why                 nonExecution    // _meta.claudeCode's say on why a result isn't the tool's output
 }
 
 // show tells the client of t, a call of the tools' that isn't kept among
@@ -88,7 +100,7 @@ func (ts *tools) show(t *tool, r report) {
 // an update with the fields of r that changed. An update that changes
 // nothing and brings no toolResponse isn't sent.
 func (ts *tools) sendLocked(t *tool, r report) {
-	meta := claudeCodeMeta{ToolName: t.name, ParentToolUseID: t.parent, ToolResponse: r.response}.meta()
+	meta := claudeCodeMeta{ToolName: t.name, ParentToolUseID: t.parent, ToolResponse: r.response, nonExecution: r.why}.meta()
 	if !t.shown {
 		t.shown, t.last = true, r
 		ts.out.emit(t.parent, acp.SessionUpdate{SessionUpdate: "tool_call", ToolCall: &acp.ToolCall{

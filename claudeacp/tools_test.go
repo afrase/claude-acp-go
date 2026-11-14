@@ -86,8 +86,9 @@ func TestToolLifecycle(t *testing.T) {
 }
 
 // An edit's diff is the snippet until claude's response gives the hunks
-// it made; a command's output is fenced, its progress shown once; a
-// subagent's calls say whose they are; one claude refused fails.
+// it made; a command's output is fenced, each beat of its progress
+// saying how long it has run; a subagent's calls say whose they are; one
+// claude refused fails.
 func TestToolResults(t *testing.T) {
 	steps := []claudetest.Step{user("id2"), echo("id2"),
 		assistant(`{"type":"tool_use","id":"toolu_e","name":"Edit","input":{"file_path":"/w/a.go","old_string":"x","new_string":"y"}}`),
@@ -111,10 +112,11 @@ func TestToolResults(t *testing.T) {
 		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"_meta":{"claudeCode":{"toolName":"Edit","toolResponse":{"filePath":"/w/a.go","structuredPatch":[{"lines":[" a","-x","+y"],"oldStart":1}]}}}}`,
 		`tool_call_update {"toolCallId":"toolu_e","status":"completed","rawOutput":"ok","_meta":{"claudeCode":{"toolName":"Edit"}}}`,
 		`tool_call {"toolCallId":"toolu_b","title":"go test","name":"Bash","kind":"execute","status":"pending","rawInput":{"command":"go test"},"_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash"}}}`,
-		`tool_call_update {"toolCallId":"toolu_b","status":"in_progress","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash"}}}`,
+		`tool_call_update {"toolCallId":"toolu_b","status":"in_progress","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":1}}}}`,
+		`tool_call_update {"toolCallId":"toolu_b","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":2}}}}`,
 		"tool_call_update {\"toolCallId\":\"toolu_b\",\"status\":\"failed\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"```\\nExit code 1\\nFAIL\\n```\"}}],\"rawOutput\":\"Exit code 1\\nFAIL\",\"_meta\":{\"claudeCode\":{\"parentToolUseId\":\"toolu_p\",\"toolName\":\"Bash\"}}}",
 		`tool_call {"toolCallId":"toolu_w","title":"Fetch https://x","name":"WebFetch","kind":"fetch","status":"pending","rawInput":{"url":"https://x"},"_meta":{"claudeCode":{"toolName":"WebFetch"}}}`,
-		`tool_call_update {"toolCallId":"toolu_w","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: denied by a rule"}}],"_meta":{"claudeCode":{"toolName":"WebFetch","toolResponse":{"decisionReason":"a rule","decisionReasonType":"","message":"denied by a rule"}}}}`,
+		`tool_call_update {"toolCallId":"toolu_w","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: a rule"}}],"_meta":{"claudeCode":{"toolName":"WebFetch","toolResponse":{"decisionReason":"a rule","message":"denied by a rule"}}}}`,
 	}
 	if got := p.toolUpdates(); !slices.Equal(got, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -311,5 +313,127 @@ func TestReportUpdate(t *testing.T) {
 	}
 	if u, changed := last.update(report{rawOutput: json.RawMessage(`{`), status: acp.ToolCallStatusCompleted}); changed {
 		t.Errorf("nothing new: %+v", u)
+	}
+}
+
+// A result shows the tool's own output that claude's message carries
+// beside it (tool_use_result), not the text claude gave the model.
+func TestStructuredResult(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"make"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","content":"<persisted-output>\nOutput too large (40KB). Full output saved to: /tmp/x.txt\n\nPreview (first 2KB):\nabc\n</persisted-output>"}]},`+
+			`"tool_use_result":{"stdout":"abc","stderr":"","interrupted":false,"persistedOutputPath":"/tmp/x.txt","persistedOutputSize":40960}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := p.toolUpdates()
+	want := "```console\\nabc\\n[Output truncated (40960 bytes total): full output saved to /tmp/x.txt]\\n```"
+	if len(got) != 2 || !strings.Contains(got[1], want) {
+		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}
+
+// The hook's diffs say where each hunk is; a Write over a file whose
+// response has no hunks shows the old text and the new, or says the old
+// was too big to diff, rather than keep a diff that shows a new file.
+func TestHookDiffs(t *testing.T) {
+	steps := []claudetest.Step{user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_e","name":"Edit","input":{"file_path":"/w/a.go","old_string":"x","new_string":"y"}}`),
+	}
+	steps = append(steps, hookCall("toolu_e", "Edit", `{"filePath":"/w/a.go","structuredPatch":[{"oldStart":119,"newStart":120,"lines":[" a","-x","+y","\\ No newline at end of file"]}]}`)...)
+	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_w","name":"Write","input":{"file_path":"/w/big.log","content":"new"}}`))
+	steps = append(steps, hookCall("toolu_w", "Write", `{"type":"update","filePath":"/w/big.log","content":"new","structuredPatch":[],"originalFile":null}`)...)
+	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_s","name":"Write","input":{"file_path":"/w/s.txt","content":"same"}}`))
+	steps = append(steps, hookCall("toolu_s", "Write", `{"type":"update","filePath":"/w/s.txt","content":"same","structuredPatch":[],"originalFile":"same"}`)...)
+	for _, id := range []string{"toolu_e", "toolu_w", "toolu_s"} {
+		steps = append(steps, sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"`+id+`","content":"ok"}]}}`))
+	}
+	steps = append(steps, result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, fake(steps...))
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	var got []string
+	for _, u := range p.toolUpdates() {
+		if before, _, ok := strings.Cut(u, `,"_meta":{"claudeCode":{"toolName":"Edit","toolResponse"`); ok {
+			got = append(got, before)
+		} else if before, _, ok := strings.Cut(u, `,"_meta":{"claudeCode":{"toolName":"Write","toolResponse"`); ok {
+			got = append(got, before)
+		}
+	}
+	want := []string{
+		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"locations":[{"path":"/w/a.go","line":120}]`,
+		"tool_call_update {\"toolCallId\":\"toolu_w\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"Updated `/w/big.log` (previous content too large to diff)\"}}]",
+		`tool_call_update {"toolCallId":"toolu_s","content":[{"type":"diff","path":"/w/s.txt","oldText":"same","newText":"same"}]`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A beat under an id of its own (a heartbeat's, a subagent's retries')
+// is its parent call's, with the subagent's type and retries.
+func TestProgressOfParent(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_a","name":"Agent","input":{"description":"Look","prompt":"p"}}`),
+		sendf(`{"type":"tool_progress","tool_use_id":"toolu_a-heartbeat-1","tool_name":"Agent","parent_tool_use_id":"toolu_a","elapsed_time_seconds":3,"subagent_type":"Explore"}`),
+		sendf(`{"type":"tool_progress","tool_use_id":"agent_msg_9","tool_name":"Agent","parent_tool_use_id":"toolu_a","elapsed_time_seconds":6,"subagent_type":"Explore",`+
+			`"subagent_retry":{"agent_id":"a1","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":429,"error_category":"rate_limit"}}`),
+		sendf(`{"type":"tool_progress","tool_use_id":"toolu_z","tool_name":"Bash","parent_tool_use_id":null,"elapsed_time_seconds":1}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"Done."}]}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := p.toolUpdates()
+	want := []string{
+		`tool_call_update {"toolCallId":"toolu_a","status":"in_progress","_meta":{"claudeCode":{"toolName":"Agent","toolResponse":{"elapsedTimeSeconds":3,"subagentType":"Explore"}}}}`,
+		`tool_call_update {"toolCallId":"toolu_a","_meta":{"claudeCode":{"toolName":"Agent","toolResponse":{"elapsedTimeSeconds":6,"subagentRetry":{"agent_id":"a1","attempt":1,"error_category":"rate_limit","error_status":429,"max_retries":10,"retry_delay_ms":500},"subagentType":"Explore"}}}}`,
+	}
+	if len(got) != 4 || !slices.Equal(got[1:3], want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A result that isn't the tool's output says why under
+// _meta.claudeCode, as claude's tool_result_meta says: the user refused
+// it, and what they said.
+func TestNonExecution(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"rm -rf x"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","is_error":true,"content":"The user doesn't want to proceed."}]},`+
+			`"tool_result_meta":[{"id":"toolu_b","non_execution_kind":"user-rejected","user_feedback":"use make instead"},{"id":"other"},7]}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := p.toolUpdates()
+	if want := `"_meta":{"claudeCode":{"nonExecutionKind":"user-rejected","toolName":"Bash","userFeedback":"use make instead"}}`; len(got) != 2 || !strings.Contains(got[1], want) {
+		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}
+
+// A call claude refused without asking fails with the rule's reason; its
+// result, after, adds claude's words as rawOutput only.
+func TestDenied(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_r","name":"Bash","input":{"command":"rm -rf x"}}`),
+		sendf(`{"type":"system","subtype":"permission_denied","tool_use_id":"toolu_r","tool_name":"Bash","decision_reason_type":"rule","decision_reason":"Bash(rm:*) is denied by a rule in settings","message":"Permission to use Bash with command rm -rf x has been denied."}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_r","is_error":true,"content":"Permission to use Bash with command rm -rf x has been denied."}]}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	want := []string{
+		`tool_call_update {"toolCallId":"toolu_r","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: Bash(rm:*) is denied by a rule in settings"}}],"_meta":{"claudeCode":{"toolName":"Bash","toolResponse":{"decisionReason":"Bash(rm:*) is denied by a rule in settings","decisionReasonType":"rule","message":"Permission to use Bash with command rm -rf x has been denied."}}}}`,
+		`tool_call_update {"toolCallId":"toolu_r","rawOutput":"Permission to use Bash with command rm -rf x has been denied.","_meta":{"claudeCode":{"toolName":"Bash"}}}`,
+	}
+	if got := p.toolUpdates(); len(got) != 3 || !slices.Equal(got[1:], want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

@@ -61,12 +61,16 @@ type Status struct {
 // CompactBoundary marks where the conversation was compacted.
 type CompactBoundary struct {
 	Envelope
-	CompactMetadata struct {
-		Trigger    string `json:"trigger"` // "manual" or "auto"
-		PreTokens  int    `json:"pre_tokens"`
-		PostTokens int    `json:"post_tokens"`
-		DurationMS int64  `json:"duration_ms"`
-	} `json:"compact_metadata"`
+	CompactMetadata *CompactMetadata `json:"compact_metadata"` // nil when claude doesn't say
+}
+
+// CompactMetadata is a compaction's facts; a count claude doesn't give
+// is nil.
+type CompactMetadata struct {
+	Trigger    string `json:"trigger"` // "manual" or "auto"
+	PreTokens  *int   `json:"pre_tokens"`
+	PostTokens *int   `json:"post_tokens"`
+	DurationMS *int64 `json:"duration_ms"`
 }
 
 // SessionState is the session going "idle", "running" or
@@ -189,6 +193,13 @@ type ModelRefusalFallback struct {
 	APIRefusalExplanation  string `json:"api_refusal_explanation"`
 	RefusedUserMessageUUID string `json:"refused_user_message_uuid"`
 	Content                string `json:"content"`
+	// Direction is "retry" (the session goes on with the fallback model)
+	// or, from an older claude, "revert" (it stays on its own); Scope
+	// "local" says only a subagent's or a side question's response fell
+	// back. APIRefusalCategory is the API's kind of refusal.
+	Direction          string `json:"direction"`
+	Scope              string `json:"scope"`
+	APIRefusalCategory string `json:"api_refusal_category"`
 }
 
 // ModelRefusalNoFallback is a refusal with no model to retry on.

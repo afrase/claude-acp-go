@@ -26,6 +26,8 @@ type claudeCodeMeta struct {
 	Kind            string          `json:"kind,omitempty"`            // "informational", for claude's notices
 	Level           *string         `json:"level,omitempty"`           // a notice's level, said even when ""
 	PromptQueueing  bool            `json:"promptQueueing,omitempty"`  // in initialize's answer
+
+	nonExecution // why a tool's result isn't its output
 }
 
 // serverName names an MCP server in _meta.
