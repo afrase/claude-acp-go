@@ -10,6 +10,7 @@ import (
 
 	acp "github.com/afrase/acp-go/unstable"
 
+	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
 	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
@@ -338,6 +339,61 @@ func TestLoadSubagentDelivery(t *testing.T) {
 				t.Errorf("no end_turn in:\n%s", strings.Join(p.replayed(), "\n"))
 			}
 		})
+	}
+}
+
+// A load of a session that is open already replays its subagents again,
+// as it replays the rest of its history, for a client rebuilding its
+// view: one that ended as it did; one the session still runs as it is
+// now, which the history can't tell.
+func TestLoadOpenSessionSubagents(t *testing.T) {
+	f := fake(user("id1"), echo("id1"),
+		assistant(`{"type":"tool_use","id":"toolu_B","name":"Agent","input":{"description":"Bg","prompt":"go","run_in_background":true}}`),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"agentB","tool_use_id":"toolu_B","task_type":"local_agent","is_backgrounded":true}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_B","content":"Async agent launched"}]}}`),
+		result(names("id1")), claudetest.Send(idle))
+	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, f)
+	cwd, sid := t.TempDir(), nthUUID(1)
+	history := []rec{
+		userRec("u1", "Count"),
+		asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count"}`)),
+		userRec("r1", resultBlocks("toolu_A", "2", false)),
+	}
+	p.writeHistory(t, cwd, sid, history...)
+	p.writeSubagent(t, cwd, sid, "agentA", "toolu_A", asstRec("s1", "msg_A1", textBlock("2")))
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	// claude has written the turn to the transcript.
+	p.writeHistory(t, cwd, sid, append(history, userRec("u2", "go"),
+		asstRec("a2", "msg_2", useBlock("toolu_B", "Agent", `{"description":"Bg","prompt":"go","run_in_background":true}`)),
+		userRec("r2", resultBlocks("toolu_B", "Async agent launched", false)))...)
+	p.writeSubagent(t, cwd, sid, "agentB", "toolu_B", asstRec("b1", "msg_B1", textBlock("working")))
+	before := len(p.notes())
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, l := range p.replayed()[before:] {
+		if strings.Contains(l, "agent") {
+			got = append(got, l)
+		}
+	}
+	want := []string{
+		sid + ` subagent {"sessionId":"agentA","description":"Count","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
+		"agentA message toolu_A",
+		"agentA text msg_A1 2 parent=toolu_A",
+		sid + ` subagent {"sessionId":"agentB","description":"Bg","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
+		"agentB message toolu_B",
+		"agentB text msg_B1 working parent=toolu_B",
+		sid + ` subagent {"sessionId":"agentA","state":{"state":"idle","stopReason":"end_turn"}}`,
+		sid + ` subagent {"sessionId":"agentB","state":{"state":"running"}}`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 

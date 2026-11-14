@@ -1,6 +1,7 @@
 package claudeacp
 
 import (
+	"cmp"
 	"encoding/json"
 	"regexp"
 	"slices"
@@ -29,11 +30,12 @@ import (
 // says of its end.
 type replayedKid struct {
 	sa         *subagent
-	call       string // the call that started it
-	background bool   // started in the background: its call's result says nothing of its end
-	launched   string // its first call's result: "ok", "cancelled", "failed", or "" with none
-	failure    string // that result's text, when it failed
-	ended      string // the status of the last task notification about it
+	call       string           // the call that started it
+	live       *acp.StateUpdate // its state, when the session had it before this replay: that is its end
+	background bool             // started in the background: its call's result says nothing of its end
+	launched   string           // its first call's result: "ok", "cancelled", "failed", or "" with none
+	failure    string           // that result's text, when it failed
+	ended      string           // the status of the last task notification about it
 	summary    string
 	stopped    bool // the main agent (TaskStop) or the user stopped it
 }
@@ -86,11 +88,8 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	}
 	// claude may run it in the background unasked; its sidecar says so.
 	in.Background = in.Background || a.Background
-	sa := r.s.kids.replayed(a.ID, call, stream, in)
-	if sa == nil { // the session is live and has it already
-		return
-	}
-	kid := &replayedKid{sa: sa, call: call, background: in.Background, stopped: a.StoppedByUser}
+	sa, live := r.s.kids.replayed(a.ID, call, stream, in)
+	kid := &replayedKid{sa: sa, call: call, live: live, background: in.Background, stopped: a.StoppedByUser}
 	r.kids = append(r.kids, kid)
 	r.byID[sa.id] = kid
 	store := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}
@@ -191,7 +190,7 @@ func (r *replayer) called(t *tool, b claudeagent.Block, structured json.RawMessa
 		// Its message went where the subagent's transcript has it
 		// (delivery), unless the transcript doesn't say.
 		if kid := r.byID[res.ResumedAgentID]; kid != nil && !r.delivered[t.id] {
-			r.s.kids.rerun(kid.sa, t.id, in.Message)
+			r.rerun(kid, t.id, in.Message)
 		}
 	}
 }
@@ -246,11 +245,22 @@ func (r *replayer) delivery(stream string, m sessions.Message, text string) {
 	for _, c := range r.sends {
 		if !r.delivered[c.id] && slices.Contains(names, c.to) && strings.Contains(text, strings.TrimSpace(c.message)) {
 			r.delivered[c.id] = true
-			r.s.kids.rerun(kid.sa, c.id, c.message)
+			r.rerun(kid, c.id, c.message)
 			return
 		}
 	}
 	r.s.kids.message(kid.sa, m.UUID, text)
+}
+
+// rerun is the subagent of kid run again by the SendMessage call with
+// message. One the session had before this replay keeps the call it
+// runs for now.
+func (r *replayer) rerun(kid *replayedKid, call, message string) {
+	if kid.live != nil {
+		r.s.kids.message(kid.sa, call, message)
+		return
+	}
+	r.s.kids.rerun(kid.sa, call, message)
 }
 
 // launchOf is the subagent call started, if the replay announced it.
@@ -332,6 +342,10 @@ func (r *replayer) notified(text string) {
 func (r *replayer) ends() {
 	ends := make([]replayEnd, 0, len(r.kids))
 	for _, kid := range r.kids {
+		if kid.live != nil {
+			ends = append(ends, replayEnd{kid.sa, *kid.live, true})
+			continue
+		}
 		st, ok := endState(kid.ended, kid.summary)
 		switch {
 		case ok:
@@ -346,31 +360,44 @@ func (r *replayer) ends() {
 		default:
 			st = acp.StateUpdate{Other: json.RawMessage(`{"state":"idle"}`)}
 		}
-		ends = append(ends, replayEnd{kid.sa, st})
+		ends = append(ends, replayEnd{kid.sa, st, false})
 	}
 	r.s.kids.replayEnded(ends)
 }
 
 // replayed is the subagent id, started by call (of the stream named
 // stream) with input in, as a replay announces it, with its first
-// message; nil when the session is live and has it already.
-func (k *subagents) replayed(id, call, stream string, in launch) *subagent {
+// message. live is its state when the session had it already (it ran
+// here, or an earlier load replayed it): it is announced again, for a
+// client that rebuilds its view, but keeps what it runs for.
+func (k *subagents) replayed(id, call, stream string, in launch) (sa *subagent, live *acp.StateUpdate) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if k.byID[id] != nil {
-		return nil
+	if sa = k.byID[id]; sa != nil {
+		st := sa.last
+		if !sa.shown { // it ran here unseen: what is known of it
+			st = acp.StateUpdate{Running: &acp.RunningStateUpdate{}}
+			if sa.ended {
+				st = acp.StateUpdate{Other: json.RawMessage(`{"state":"idle"}`)}
+			}
+		}
+		live = &st
+	} else {
+		sa = &subagent{id: id, call: call, background: in.Background}
+		k.byID[sa.id], k.byCall[call] = sa, sa
 	}
-	sa := &subagent{id: id, call: call, on: k.sid, background: in.Background}
-	if p := k.byCall[stream]; p != nil {
-		sa.parent = p.id
-		if p.shown {
-			sa.on = p.id
+	if !sa.shown {
+		sa.on = k.sid
+		if p := k.byCall[stream]; p != nil {
+			sa.parent = cmp.Or(sa.parent, p.id)
+			if p.shown {
+				sa.on = p.id
+			}
 		}
 	}
-	k.byID[sa.id], k.byCall[call] = sa, sa
 	k.announceLocked(sa, in, "", "")
 	k.delegatedLocked(sa, call, in.Prompt)
-	return sa
+	return sa, live
 }
 
 // message sends the subagent sa a message, id, that no call of the
@@ -390,10 +417,12 @@ func (k *subagents) rerun(sa *subagent, call, message string) {
 	k.delegatedLocked(sa, call, message)
 }
 
-// replayEnd is how a subagent a replay announced ended.
+// replayEnd is how a subagent a replay announced ended: st, or, when
+// live, its state now.
 type replayEnd struct {
-	sa *subagent
-	st acp.StateUpdate
+	sa   *subagent
+	st   acp.StateUpdate
+	live bool
 }
 
 // replayEnded tells the client how each subagent a replay announced
@@ -402,8 +431,10 @@ func (k *subagents) replayEnded(ends []replayEnd) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for _, e := range ends {
-		e.sa.ended = true
-		e.sa.endedRuns = map[string]bool{e.sa.call: true}
+		if !e.live {
+			e.sa.ended = true
+			e.sa.endedRuns = map[string]bool{e.sa.call: true}
+		}
 		k.childStateLocked(e.sa, e.st)
 	}
 }

@@ -37,6 +37,7 @@ type subagent struct {
 	asks       int    // its permission and question requests open
 	ended      bool
 	endedRuns  map[string]bool // the calls whose run of it has ended
+	last       acp.StateUpdate // the state the client was told of last
 }
 
 // subagents are a session's subagents, and the way every update of a
@@ -298,7 +299,7 @@ func (k *subagents) announceLocked(sa *subagent, in launch, role, description st
 		su.Description = acp.Nullable[string]{Value: &d, Present: true}
 	}
 	k.send(sa.on, acp.SessionUpdate{SessionUpdate: "subagent_update", SubagentUpdate: su})
-	sa.shown = true
+	sa.shown, sa.last = true, acp.StateUpdate{Running: &acp.RunningStateUpdate{}}
 }
 
 // againLocked is the subagent sa running again for call (a SendMessage's,
@@ -349,6 +350,7 @@ func (k *subagents) delegatedLocked(sa *subagent, call, prompt string) {
 
 // childStateLocked tells the client the subagent sa's state.
 func (k *subagents) childStateLocked(sa *subagent, st acp.StateUpdate) {
+	sa.last = st
 	k.send(sa.on, acp.SessionUpdate{SessionUpdate: "subagent_update", SubagentUpdate: &acp.SubagentUpdate{
 		SessionID: acp.SessionID(sa.id), State: stateOf(st)}})
 }
