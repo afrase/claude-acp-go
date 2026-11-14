@@ -103,7 +103,7 @@ func TestResultContent(t *testing.T) {
 		{"tool_search_tool_regex", `{"type":"tool_search_tool_result_error","error_code":"unavailable","error_message":"down"}`, false, "Error: unavailable - down"},
 		{"code_execution", `{"type":"bash_code_execution_result","stdout":"","stderr":"oops","return_code":1}`, false, "Output: oops"},
 	} {
-		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError})
+		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError}, nil)
 		got := "-"
 		if ok {
 			var parts []string
@@ -123,6 +123,53 @@ func TestResultContent(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("%s %s: %q, want %q", tc.name, tc.result, got, tc.want)
+		}
+	}
+}
+
+// A result shows the tool's own output where claude gave it, as
+// claude-agent-acp does: a command's output without claude's wrapper for
+// the model, a file without its reminders, the hits of a web search and a
+// subagent's report; else the text claude gave the model.
+func TestResultFromStructured(t *testing.T) {
+	persisted := `"<persisted-output>\nOutput too large (40KB). Full output saved to: /tmp/x.txt\n\nPreview (first 2KB):\nabc\n</persisted-output>"`
+	for _, tc := range []struct {
+		name, result, structured string
+		isError                  bool
+		want                     string // "-" leaves the content
+	}{
+		{"Bash", persisted, `{"stdout":"abc","stderr":"","interrupted":false,"persistedOutputPath":"/tmp/x.txt","persistedOutputSize":40960}`, false,
+			"```console\nabc\n[Output truncated (40960 bytes total): full output saved to /tmp/x.txt]\n```"},
+		{"Bash", `"out\nerr\n(hint for the model)"`, `{"stdout":"out\n","stderr":"err","interrupted":true}`, false,
+			"```console\nout\n\nerr\n[Command was aborted before completion]\n```"},
+		{"Bash", `""`, `{"stdout":"","stderr":"","interrupted":false}`, false, "-"},
+		{"Bash", `"Command running in background with ID: b1"`, `{"stdout":"","stderr":"","backgroundTaskId":"b1"}`, false,
+			"```console\nCommand running in background with ID: b1\n```"},
+		{"Bash", `"Exit code 1\nboom"`, `{"stdout":"","stderr":"boom"}`, true, "```\nExit code 1\nboom\n```"}, // a failure shows claude's text
+		{"Read", `"     5\ta\n     6\tb\n<system-reminder>r</system-reminder>"`, `{"type":"text","file":{"filePath":"/w/a","content":"a\nb\n","startLine":5,"numLines":2,"totalLines":9}}`, false,
+			"```\n5\ta\n6\tb\n```"},
+		{"Read", `"     1\ta\n[truncated]"`, `{"type":"text","file":{"content":"a","startLine":1,"numLines":1,"totalLines":3,"truncatedByTokenCap":true}}`, false,
+			"```\n1\ta\n[File truncated: showing 1 of 3 lines]\n```"},
+		{"Read", `"x"`, `{"type":"text","file":{"content":"","startLine":1}}`, false, "```\nx\n```"}, // an empty file keeps claude's note
+		{"WebSearch", `"Web search results for query: \"acp\"\n\nLinks: [{\"title\":\"A\",\"url\":\"https://a\"}]"`,
+			`{"query":"acp","results":[{"tool_use_id":"s1","content":[{"title":"A","url":"https://a"},{"title":"B","url":"https://b"}]},"A summary.",{"content":[{"title":7}]}]}`, false,
+			"A (https://a)\nB (https://b)\nA summary."},
+		{"WebSearch", `"raw"`, `{"results":[]}`, false, "raw"},
+		{"Agent", `[{"type":"text","text":"[Subagent hand-back] Frame. The report follows:\n  Done.\nagentId: a1 (use SendMessage to continue)"}]`,
+			`{"status":"completed","agentId":"a1","content":[{"type":"text","text":"Done."}]}`, false, "Done."},
+		{"Agent", `[{"type":"text","text":"Raw."}]`, `{"status":"completed","content":[]}`, false, "Raw."},
+		{"Bash", `"a"`, `[1]`, false, "```console\na\n```"}, // not an object: the text
+	} {
+		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError}, json.RawMessage(tc.structured))
+		got := "-"
+		if ok {
+			got = "?"
+			if len(content) == 1 && content[0].Content != nil && content[0].Content.Content.Text != nil {
+				got = content[0].Content.Content.Text.Text
+			}
+		}
+		if got != tc.want {
+			t.Errorf("%s %s: %q, want %q", tc.name, tc.structured, got, tc.want)
 		}
 	}
 }

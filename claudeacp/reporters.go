@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -153,7 +155,14 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 
 // resultContent is what a tool's result shows; ok false leaves the call's
 // content as it was (an edit's diff stays, and the hook's replaces it).
-func resultContent(name string, b claudeagent.Block) (content []acp.ToolCallContent, ok bool) {
+// The text claude gave the model is for the model: where structured, the
+// tool's own output, says the same more plainly, that is shown instead.
+func resultContent(name string, b claudeagent.Block, structured json.RawMessage) (content []acp.ToolCallContent, ok bool) {
+	if !b.IsError {
+		if content, ok, said := fromStructured(name, structured); said {
+			return content, ok
+		}
+	}
 	text, shown := resultParts(b.Content)
 	switch name {
 	case "Edit", "Write":
@@ -184,6 +193,151 @@ func resultContent(name string, b claudeagent.Block) (content []acp.ToolCallCont
 		text = fence("", text)
 	}
 	return append(texts(text), shown...), true
+}
+
+// fromStructured is what a result shows from structured, the tool's own
+// output, as claude-agent-acp shows it; said is false when structured
+// doesn't say (another tool's, an older claude's, or missing), and the
+// result's text is shown.
+func fromStructured(name string, structured json.RawMessage) (content []acp.ToolCallContent, ok, said bool) {
+	if len(structured) == 0 || structured[0] != '{' {
+		return nil, false, false // none, or not an object
+	}
+	switch name {
+	case "Bash", "PowerShell":
+		return commandOutput(structured)
+	case "Read":
+		return fileRead(structured)
+	case "WebSearch":
+		return searchHits(structured)
+	case "Agent", "Task":
+		return agentReport(structured)
+	}
+	return nil, false, false
+}
+
+// commandOutput is a command's output without what claude adds for the
+// model (hints, the wrapper around output too long to give it whole).
+func commandOutput(structured json.RawMessage) (content []acp.ToolCallContent, ok, said bool) {
+	var out struct {
+		Stdout              *string         `json:"stdout"`
+		Stderr              *string         `json:"stderr"`
+		Interrupted         bool            `json:"interrupted"`
+		IsImage             bool            `json:"isImage"`
+		BackgroundTaskID    json.RawMessage `json:"backgroundTaskId"`
+		PersistedOutputPath *string         `json:"persistedOutputPath"`
+		PersistedOutputSize *int64          `json:"persistedOutputSize"`
+	}
+	// An image's output is in the result's blocks, and a command gone to
+	// the background has only the result's word on it.
+	if json.Unmarshal(structured, &out) != nil || out.Stdout == nil || out.Stderr == nil || out.IsImage || out.BackgroundTaskID != nil {
+		return nil, false, false
+	}
+	lines := nonEmpty(*out.Stdout, *out.Stderr)
+	if out.Interrupted {
+		lines = append(lines, "[Command was aborted before completion]")
+	}
+	if out.PersistedOutputPath != nil {
+		size := ""
+		if out.PersistedOutputSize != nil {
+			size = " (" + strconv.FormatInt(*out.PersistedOutputSize, 10) + " bytes total)"
+		}
+		lines = append(lines, "[Output truncated"+size+": full output saved to "+*out.PersistedOutputPath+"]")
+	}
+	output := strings.TrimRightFunc(strings.Join(lines, "\n"), unicode.IsSpace)
+	if strings.TrimSpace(output) == "" {
+		return nil, false, true
+	}
+	return []acp.ToolCallContent{textContent(fence("console", output))}, true, true
+}
+
+// fileRead is a file's text as Read read it, numbered from where it
+// started, without the notes claude adds for the model.
+func fileRead(structured json.RawMessage) (content []acp.ToolCallContent, ok, said bool) {
+	var out struct {
+		Type string `json:"type"`
+		File struct {
+			Content             string `json:"content"`
+			StartLine           int    `json:"startLine"`
+			NumLines            *int   `json:"numLines"`
+			TotalLines          *int   `json:"totalLines"`
+			TruncatedByTokenCap bool   `json:"truncatedByTokenCap"`
+		} `json:"file"`
+	}
+	// An empty file keeps claude's note saying so; an image or a PDF is in
+	// the result's blocks.
+	if json.Unmarshal(structured, &out) != nil || out.Type != "text" || out.File.Content == "" {
+		return nil, false, false
+	}
+	f := out.File
+	start := max(f.StartLine, 1)
+	lines := strings.Split(strings.TrimSuffix(f.Content, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = strconv.Itoa(start+i) + "\t" + l
+	}
+	text := strings.Join(lines, "\n")
+	if f.TruncatedByTokenCap { // claude's own note on it is in the model's text
+		detail := ""
+		if f.NumLines != nil && f.TotalLines != nil {
+			detail = fmt.Sprintf(": showing %d of %d lines", *f.NumLines, *f.TotalLines)
+		}
+		text += "\n[File truncated" + detail + "]"
+	}
+	return []acp.ToolCallContent{textContent(fence("", text))}, true, true
+}
+
+// searchHits is a web search's hits, each "Title (url)", where the text
+// has claude's dump of them for the model.
+func searchHits(structured json.RawMessage) (content []acp.ToolCallContent, ok, said bool) {
+	var out struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	_ = json.Unmarshal(structured, &out)
+	var lines []string
+	for _, r := range out.Results {
+		var s string
+		var hits struct {
+			Content []struct {
+				Title *string `json:"title"`
+				URL   *string `json:"url"`
+			} `json:"content"`
+		}
+		switch {
+		case json.Unmarshal(r, &s) == nil:
+			lines = append(lines, s)
+		case json.Unmarshal(r, &hits) == nil:
+			for _, h := range hits.Content {
+				if h.Title != nil && h.URL != nil { // claude's output isn't typed: one that isn't a hit is left out
+					lines = append(lines, *h.Title+" ("+*h.URL+")")
+				}
+			}
+		}
+	}
+	if lines == nil {
+		return nil, false, false
+	}
+	return texts(strings.Join(lines, "\n")), true, true
+}
+
+// agentReport is a subagent's report, without the frame and trailer
+// claude puts around it for the model. One with no text is better shown
+// from the result's text.
+func agentReport(structured json.RawMessage) (content []acp.ToolCallContent, ok, said bool) {
+	var out struct {
+		Status  string          `json:"status"`
+		Content json.RawMessage `json:"content"`
+	}
+	var blocks []json.RawMessage
+	if json.Unmarshal(structured, &out) != nil || out.Status != "completed" || json.Unmarshal(out.Content, &blocks) != nil || len(blocks) == 0 {
+		return nil, false, false
+	}
+	text, shown := resultParts(out.Content)
+	return append(texts(text), shown...), true, true
+}
+
+// nonEmpty is those of ss that aren't "".
+func nonEmpty(ss ...string) []string {
+	return slices.DeleteFunc(ss, func(s string) bool { return s == "" })
 }
 
 // handedBack is a foreground subagent's report out of the frame claude

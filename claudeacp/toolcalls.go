@@ -102,13 +102,14 @@ func wholeReport(name string, input json.RawMessage, cwd string) report {
 }
 
 // resultReport is a call of the tool name ended by its result b,
-// completed or failed, live or replayed.
-func resultReport(name string, b claudeagent.Block) report {
+// completed or failed, live or replayed; structured is the tool's own
+// output (claude's tool_use_result), when claude gave it.
+func resultReport(name string, b claudeagent.Block, structured json.RawMessage) report {
 	r := report{status: acp.ToolCallStatusCompleted, rawOutput: b.Content}
 	if b.IsError {
 		r.status = acp.ToolCallStatusFailed
 	}
-	if content, ok := resultContent(name, b); ok {
+	if content, ok := resultContent(name, b, structured); ok {
 		r.content = content
 	}
 	return r
@@ -127,7 +128,8 @@ func (ts *tools) callInput(id string) (in launch, stream string) {
 }
 
 // result is a tool's result: the call ends, completed or failed.
-func (ts *tools) result(b claudeagent.Block) {
+// structured is the tool's own output, when claude gave it.
+func (ts *tools) result(b claudeagent.Block, structured json.RawMessage) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	t := ts.byID[b.ToolUseID]
@@ -135,7 +137,7 @@ func (ts *tools) result(b claudeagent.Block) {
 		return
 	}
 	t.ended = true
-	ts.sendLocked(t, resultReport(t.name, b))
+	ts.sendLocked(t, resultReport(t.name, b, structured))
 	ts.out.release(t.id) // its work, if it started a subagent claude never named
 }
 

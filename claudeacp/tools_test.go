@@ -313,3 +313,22 @@ func TestReportUpdate(t *testing.T) {
 		t.Errorf("nothing new: %+v", u)
 	}
 }
+
+// A result shows the tool's own output that claude's message carries
+// beside it (tool_use_result), not the text claude gave the model.
+func TestStructuredResult(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"make"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","content":"<persisted-output>\nOutput too large (40KB). Full output saved to: /tmp/x.txt\n\nPreview (first 2KB):\nabc\n</persisted-output>"}]},`+
+			`"tool_use_result":{"stdout":"abc","stderr":"","interrupted":false,"persistedOutputPath":"/tmp/x.txt","persistedOutputSize":40960}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := p.toolUpdates()
+	want := "```console\\nabc\\n[Output truncated (40960 bytes total): full output saved to /tmp/x.txt]\\n```"
+	if len(got) != 2 || !strings.Contains(got[1], want) {
+		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}

@@ -151,6 +151,6 @@ func (r *replayer) toolResult(b claudeagent.Block, structured json.RawMessage) {
 		return
 	}
 	delete(r.calls, b.ToolUseID)
-	r.s.tools.show(t, resultReport(t.name, b))
+	r.s.tools.show(t, resultReport(t.name, b, structured))
 	r.called(t, b, structured)
 }

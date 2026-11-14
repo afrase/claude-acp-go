@@ -113,7 +113,7 @@ func (s *session) user(m *claudeagent.User) {
 			structured = m.ToolUseResult
 		}
 		if !s.plan.result(b, structured) {
-			s.tools.result(b)
+			s.tools.result(b, structured)
 		}
 		s.resumed(b.ToolUseID, structured)
 	}
@@ -266,7 +266,7 @@ func (s *session) assistant(m *claudeagent.Assistant) {
 			case isToolUse(b.Type):
 				s.tools.input(key, b)
 			case strings.HasSuffix(b.Type, "_tool_result"): // a server tool's, which the API ran
-				s.tools.result(b)
+				s.tools.result(b, nil)
 			}
 		}
 	}
