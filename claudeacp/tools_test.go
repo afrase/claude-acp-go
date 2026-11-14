@@ -116,7 +116,7 @@ func TestToolResults(t *testing.T) {
 		`tool_call_update {"toolCallId":"toolu_b","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":2}}}}`,
 		"tool_call_update {\"toolCallId\":\"toolu_b\",\"status\":\"failed\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"```\\nExit code 1\\nFAIL\\n```\"}}],\"rawOutput\":\"Exit code 1\\nFAIL\",\"_meta\":{\"claudeCode\":{\"parentToolUseId\":\"toolu_p\",\"toolName\":\"Bash\"}}}",
 		`tool_call {"toolCallId":"toolu_w","title":"Fetch https://x","name":"WebFetch","kind":"fetch","status":"pending","rawInput":{"url":"https://x"},"_meta":{"claudeCode":{"toolName":"WebFetch"}}}`,
-		`tool_call_update {"toolCallId":"toolu_w","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: denied by a rule"}}],"_meta":{"claudeCode":{"toolName":"WebFetch","toolResponse":{"decisionReason":"a rule","decisionReasonType":"","message":"denied by a rule"}}}}`,
+		`tool_call_update {"toolCallId":"toolu_w","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: a rule"}}],"_meta":{"claudeCode":{"toolName":"WebFetch","toolResponse":{"decisionReason":"a rule","message":"denied by a rule"}}}}`,
 	}
 	if got := p.toolUpdates(); !slices.Equal(got, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -414,5 +414,26 @@ func TestNonExecution(t *testing.T) {
 	got := p.toolUpdates()
 	if want := `"_meta":{"claudeCode":{"nonExecutionKind":"user-rejected","toolName":"Bash","userFeedback":"use make instead"}}`; len(got) != 2 || !strings.Contains(got[1], want) {
 		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}
+
+// A call claude refused without asking fails with the rule's reason; its
+// result, after, adds claude's words as rawOutput only.
+func TestDenied(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_r","name":"Bash","input":{"command":"rm -rf x"}}`),
+		sendf(`{"type":"system","subtype":"permission_denied","tool_use_id":"toolu_r","tool_name":"Bash","decision_reason_type":"rule","decision_reason":"Bash(rm:*) is denied by a rule in settings","message":"Permission to use Bash with command rm -rf x has been denied."}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_r","is_error":true,"content":"Permission to use Bash with command rm -rf x has been denied."}]}}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	want := []string{
+		`tool_call_update {"toolCallId":"toolu_r","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: Bash(rm:*) is denied by a rule in settings"}}],"_meta":{"claudeCode":{"toolName":"Bash","toolResponse":{"decisionReason":"Bash(rm:*) is denied by a rule in settings","decisionReasonType":"rule","message":"Permission to use Bash with command rm -rf x has been denied."}}}}`,
+		`tool_call_update {"toolCallId":"toolu_r","rawOutput":"Permission to use Bash with command rm -rf x has been denied.","_meta":{"claudeCode":{"toolName":"Bash"}}}`,
+	}
+	if got := p.toolUpdates(); len(got) != 3 || !slices.Equal(got[1:], want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

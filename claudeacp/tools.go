@@ -24,6 +24,7 @@ type tool struct {
 	fields   int  // top-level fields of its input sent as it streamed
 	whole    bool // its input came whole: claude runs it (or asks first)
 	ended    bool
+	denied   bool   // claude refused it without asking: its result, to come, adds only rawOutput
 	shown    bool   // the client has its tool_call
 	last     report // each field as the client last had it
 }

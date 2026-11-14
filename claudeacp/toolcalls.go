@@ -140,7 +140,14 @@ func (ts *tools) result(b claudeagent.Block, structured json.RawMessage, why non
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	t := ts.byID[b.ToolUseID]
-	if t == nil || t.ended {
+	switch {
+	case t == nil:
+		return
+	case t.denied: // its end is shown: the result adds claude's words, raw
+		t.denied = false
+		ts.sendLocked(t, report{rawOutput: b.Content, why: why})
+		return
+	case t.ended:
 		return
 	}
 	t.ended = true
@@ -187,12 +194,14 @@ func (ts *tools) denied(m *claudeagent.PermissionDenied) {
 	if t == nil || t.ended {
 		return
 	}
-	t.ended = true
-	reason := cmp.Or(m.Message, m.DecisionReason)
+	t.ended, t.denied = true, true
+	// The rule's reason says more than claude's message, which only says
+	// it was denied.
+	reason := cmp.Or(m.DecisionReason, m.Message)
 	response, _ := json.Marshal(struct {
-		DecisionReasonType string `json:"decisionReasonType"`
-		DecisionReason     string `json:"decisionReason"`
-		Message            string `json:"message"`
+		DecisionReasonType string `json:"decisionReasonType,omitempty"`
+		DecisionReason     string `json:"decisionReason,omitempty"`
+		Message            string `json:"message,omitempty"`
 	}{m.DecisionReasonType, m.DecisionReason, m.Message})
 	ts.sendLocked(t, report{status: acp.ToolCallStatusFailed, content: texts("Permission denied: " + reason), response: response})
 }
