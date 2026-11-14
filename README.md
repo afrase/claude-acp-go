@@ -6,7 +6,7 @@
 Run Claude Code in Zed and other [Agent Client Protocol](https://agentclientprotocol.com)
 (ACP) clients, without Node.
 
-`claude-acp` is a single static binary. It speaks ACP to the editor and runs
+`claude-acp` is a single binary. It speaks ACP to the editor and runs
 your own `claude` CLI for each session. It behaves like
 [claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp),
 the Node agent that ACP clients use today, so a client that works with one
@@ -47,6 +47,14 @@ go install github.com/afrase/claude-acp-go/cmd/claude-acp@latest
 
 The binary goes to `$(go env GOPATH)/bin`. Run `claude-acp -version` to
 check it.
+
+On Linux, `go install` links the binary to the C library when a C
+compiler is present. To copy it to another machine, such as an Alpine
+container or an older distribution, build a static one instead:
+
+```sh
+CGO_ENABLED=0 go install github.com/afrase/claude-acp-go/cmd/claude-acp@latest
+```
 
 ## Use it from Zed
 
