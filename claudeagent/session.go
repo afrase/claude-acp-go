@@ -262,7 +262,7 @@ func (s *Session) write(ctx context.Context, v any) error {
 	case <-s.closing:
 		return ErrClosed
 	}
-	return s.t.write(v)
+	return s.t.write(ctx, v)
 }
 
 // Close ends the session: callbacks' contexts end, requests waiting for

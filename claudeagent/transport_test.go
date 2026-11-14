@@ -155,7 +155,7 @@ func TestTransportFrames(t *testing.T) {
 // signal; nothing is written after.
 func TestTransportWriteAndEOF(t *testing.T) {
 	tr, c, _ := helper(t, "echo", Options{})
-	if err := tr.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "a\nb"}}); err != nil {
+	if err := tr.write(context.Background(), map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "a\nb"}}); err != nil {
 		t.Fatal(err)
 	}
 	m := <-tr.messages()
@@ -169,10 +169,10 @@ func TestTransportWriteAndEOF(t *testing.T) {
 	if len(c) != 1 || (<-c).d != 2*time.Second {
 		t.Error("the shutdown didn't wait 2 s for EOF to be honoured")
 	}
-	if err := tr.write(map[string]any{"type": "user"}); !errors.Is(err, ErrClosed) {
+	if err := tr.write(context.Background(), map[string]any{"type": "user"}); !errors.Is(err, ErrClosed) {
 		t.Errorf("a write after close: %v", err)
 	}
-	if err := tr.write(func() {}); err == nil || errors.Is(err, ErrClosed) {
+	if err := tr.write(context.Background(), func() {}); err == nil || errors.Is(err, ErrClosed) {
 		t.Errorf("a value that can't be JSON: %v", err)
 	}
 }
@@ -307,7 +307,7 @@ func TestTransportSlowConsumer(t *testing.T) {
 	tr, _, idle := helper(t, "trail", Options{})
 	msgs := tr.messages()
 	<-msgs // the second waits to be handed on; the rest will wait in the pipe
-	if err := tr.write(map[string]any{"type": "go"}); err != nil {
+	if err := tr.write(context.Background(), map[string]any{"type": "go"}); err != nil {
 		t.Fatal(err)
 	}
 	<-tr.exited

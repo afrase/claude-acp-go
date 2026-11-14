@@ -193,7 +193,7 @@ func (s *Session) begin(ctx context.Context, body requestBody, timeout bool) (*C
 	frame := controlRequestLine{Type: "control_request", RequestID: c.id, Request: body}
 	var err error
 	if c.subtype == "initialize" && !s.initWritten() {
-		err = s.t.write(frame)
+		err = s.t.write(ctx, frame)
 		s.initDone()
 	} else {
 		err = s.write(ctx, frame)
@@ -269,10 +269,17 @@ func (s *Session) Begin(ctx context.Context, subtype string, req any) (*Call, er
 	return s.begin(ctx, body, true)
 }
 
+// withdrawTimeout bounds how long withdrawing a request waits to be
+// written: a claude that doesn't read its stdin can't take it anyway.
+const withdrawTimeout = 5 * time.Second
+
 // withdraw tells claude a request of ours is no longer wanted. It goes
-// out whether or not ctx has ended.
+// out whether or not ctx has ended, unless it can't be written within
+// withdrawTimeout.
 func (s *Session) withdraw(ctx context.Context, id string) {
-	_ = s.write(context.WithoutCancel(ctx), cancelRequestLine{Type: "control_cancel_request", RequestID: id})
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), withdrawTimeout)
+	defer cancel()
+	_ = s.write(ctx, cancelRequestLine{Type: "control_cancel_request", RequestID: id})
 }
 
 // answered hands a control_response to the request waiting for it. One

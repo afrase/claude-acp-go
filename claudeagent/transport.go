@@ -43,7 +43,10 @@ type transport struct {
 	tail        tail
 	errorResult atomic.Pointer[string] // the last result's text, if it was an error
 
-	wmu         sync.Mutex
+	// wslot is the write slot: one writer at a time. A channel, not a
+	// mutex, so a writer waiting behind one stuck on a full pipe gives up
+	// as its ctx says.
+	wslot       chan struct{}
 	inputClosed atomic.Bool
 	closeOnce   sync.Once
 }
@@ -79,7 +82,7 @@ func makeTransport(p *Proc, o Options) *transport {
 		log: o.Log, stderr: o.Stderr, after: time.After, idle: time.After,
 		msgs: make(chan Message), closing: make(chan struct{}),
 		stdoutDone: make(chan struct{}), stderrDone: make(chan struct{}),
-		exited: make(chan struct{}), done: make(chan struct{}),
+		exited: make(chan struct{}), done: make(chan struct{}), wslot: make(chan struct{}, 1),
 	}
 	if t.log == nil {
 		t.log = slog.New(slog.DiscardHandler)
@@ -230,15 +233,26 @@ func (w *watched) Read(p []byte) (int, error) {
 }
 
 // write writes v to claude's stdin as one JSON line. Only marshalled
-// values are written: claude exits on a stdin line that isn't JSON.
-func (t *transport) write(v any) error {
+// values are written: claude exits on a stdin line that isn't JSON. ctx
+// bounds the wait for another write to finish; a write under way can't
+// be stopped but by closing the pipe (closeInput).
+func (t *transport) write(ctx context.Context, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("claudeagent: encoding a message: %w", err)
 	}
 	b = append(b, '\n')
-	t.wmu.Lock()
-	defer t.wmu.Unlock()
+	select {
+	case t.wslot <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.closing:
+		return ErrClosed
+	}
+	defer func() { <-t.wslot }()
+	if err := ctx.Err(); err != nil { // it may have ended as the slot came free
+		return err
+	}
 	if t.inputClosed.Load() {
 		return ErrClosed
 	}

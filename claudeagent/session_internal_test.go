@@ -6,9 +6,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 // stdin is claude's stdin as a test sees it: the lines written to it,
@@ -150,5 +153,75 @@ func TestAnswerBeatsEndedContext(t *testing.T) {
 	}
 	if got := in.written(); len(got) != 0 {
 		t.Errorf("withdrawn: %q", got)
+	}
+}
+
+// stuckStdin is the stdin of a claude that has stopped reading it: a
+// write to it waits until it is closed.
+type stuckStdin struct {
+	*io.PipeWriter
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (w *stuckStdin) Close() error {
+	w.once.Do(func() { close(w.closed) })
+	return w.PipeWriter.Close()
+}
+
+// exitsOnClose is a claude that exits once its stdin closes.
+type exitsOnClose struct {
+	in          *stuckStdin
+	out, errOut io.Closer
+}
+
+func (p *exitsOnClose) Wait() error {
+	<-p.in.closed
+	_ = p.out.Close()
+	_ = p.errOut.Close()
+	return nil
+}
+
+func (p *exitsOnClose) Signal(os.Signal) error { return nil }
+
+// With a write stuck on claude's full stdin, a request still gives up as
+// its ctx says, rather than waiting behind the write for good; Close then
+// ends the stuck write.
+func TestRequestNotHeldByStuckWrite(t *testing.T) {
+	_, inW := io.Pipe() // no one reads it
+	in := &stuckStdin{PipeWriter: inW, closed: make(chan struct{})}
+	outR, outW := io.Pipe()
+	errR, errW := io.Pipe()
+	p := &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &exitsOnClose{in, outW, errW}}
+	s := newSession(t.Context(), newTransport(p, Options{}), Options{}, nil)
+	s.initDone()
+	t.Cleanup(func() { _ = s.Close() })
+
+	sent := make(chan error, 1)
+	go func() {
+		_, err := s.Send(context.Background(), UserInput{Text: strings.Repeat("x", 1<<20)})
+		sent <- err
+	}()
+	for len(s.t.wslot) == 0 { // the Send holds the slot
+		runtime.Gosched()
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	interrupted := make(chan error, 1)
+	go func() {
+		_, err := s.Interrupt(ctx)
+		interrupted <- err
+	}()
+	select {
+	case err := <-interrupted:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Interrupt: %v", err)
+		}
+	case <-time.After(3 * time.Second): // a guard, not an order
+		t.Fatal("Interrupt with a 200 ms ctx still waits behind the stuck write")
+	}
+	_ = s.Close()
+	if err := <-sent; !errors.Is(err, ErrClosed) {
+		t.Errorf("the stuck Send: %v", err)
 	}
 }
