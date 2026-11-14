@@ -47,7 +47,7 @@ func TestReplay(t *testing.T) {
 	if got := s.read(t); got != `{"type":"control_response","response":{"subtype":"success","request_id":"req_1","response":{}}}` {
 		t.Errorf("%s", got)
 	}
-	s.write(t, `{"type":"user","uuid":"u-live","message":{"role":"user","content":"hello"}}`)
+	s.write(t, `{"type":"user","uuid":"u-live","message":{"role":"user","content":"hi"}}`)
 	for _, want := range []string{
 		`{"type":"user","uuid":"u-live","session_id":"live-s","isReplay":true}`,
 		`{"type":"result","subtype":"success","session_id":"live-s","user_message_uuids":["u-live"],"result":"rec-u was here"}`,
@@ -74,6 +74,67 @@ func TestReplayMismatch(t *testing.T) {
 	s.write(t, `{"type":"user","uuid":"u","message":{"role":"user","content":"too soon"}}`)
 	if err := s.Wait(); err == nil || f.Err() == nil || !strings.Contains(f.Err().Error(), "too soon") {
 		t.Errorf("exit %v, script %v", err, f.Err())
+	}
+}
+
+const decisions = `{"argv":["--session-id","rec-s"],"envKeys":[],"cli":"2.1.312"}
+{"dir":"in","ms":0,"frame":{"type":"control_request","request_id":"rec-init","request":{"subtype":"initialize","hooks":{"Stop":[{"hookCallbackIds":["hook_0"]}]}}}}
+{"dir":"out","ms":1,"frame":{"type":"control_response","response":{"subtype":"success","request_id":"rec-init","response":{}}}}
+{"dir":"out","ms":2,"frame":{"type":"control_request","request_id":"c1","request":{"subtype":"can_use_tool","tool_name":"Bash"}}}
+{"dir":"in","ms":3,"frame":{"type":"control_response","response":{"subtype":"success","request_id":"c1","response":{"behavior":"allow","toolUseID":"t1","updatedInput":{"command":"ls"}}}}}
+{"dir":"in","ms":4,"frame":{"type":"user","uuid":"rec-u","session_id":"rec-s","timestamp":"2026-11-01T00:00:00Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}}
+{"dir":"in","ms":5,"frame":{"type":"control_request","request_id":"rec-c","request":{"subtype":"cancel_async_message","message_uuid":"rec-u"}}}
+{"dir":"in","ms":6,"frame":{"type":"control_request","request_id":"rec-stop","request":{"subtype":"stop_task","task_id":"task-1"}}}
+`
+
+// A replay checks what the client decided: a request's arguments, an
+// answer's outcome and the request it answers, a message's content. The
+// ids it gave, the time and the client's own setup can differ.
+func TestReplayChecksDecisions(t *testing.T) {
+	init := `{"type":"control_request","request_id":"live-init","request":{"subtype":"initialize","hooks":{}}}`
+	answer := `{"type":"control_response","response":{"subtype":"success","request_id":"c1","response":{"behavior":"allow","toolUseID":"t1","updatedInput":{"command":"ls -a"}}}}`
+	user := `{"type":"user","uuid":"live-u","session_id":"live-s","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}`
+	cancel := `{"type":"control_request","request_id":"live-c","request":{"subtype":"cancel_async_message","message_uuid":"live-u"}}`
+	stop := `{"type":"control_request","request_id":"live-stop","request":{"subtype":"stop_task","task_id":"task-1"}}`
+	for name, tc := range map[string]struct {
+		old, new string // what in the lines above the client writes instead
+		fails    bool
+	}{
+		"as recorded":      {},
+		"denied":           {old: `"behavior":"allow"`, new: `"behavior":"deny"`, fails: true},
+		"an error":         {old: `{"subtype":"success","request_id":"c1"`, new: `{"subtype":"error","request_id":"c1"`, fails: true},
+		"another request":  {old: `"request_id":"c1"`, new: `"request_id":"c2"`, fails: true},
+		"other text":       {old: `"text":"hi"`, new: `"text":"bye"`, fails: true},
+		"another message":  {old: `"message_uuid":"live-u"`, new: `"message_uuid":"rec-u"`, fails: true},
+		"another task":     {old: `"task_id":"task-1"`, new: `"task_id":"task-2"`, fails: true},
+		"a field added":    {old: `"task_id":"task-1"`, new: `"task_id":"task-1","why":"asked"`},
+		"no session id":    {old: `"session_id":"live-s",`, new: ``},
+		"setup of its own": {old: `"hooks":{}`, new: `"hooks":{"Stop":[{"hookCallbackIds":["h"]}]},"agents":{}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := ReadCassette(strings.NewReader(decisions))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := Replay(c)
+			p, err := f.Spawn(context.Background(), claudeagent.Spec{Path: "/claude", Args: []string{"--session-id", "live-s"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			go func() { _, _ = io.Copy(io.Discard, p.Stderr) }()
+			go func() { _, _ = io.Copy(io.Discard, p.Stdout) }()
+			for _, line := range []string{init, answer, user, cancel, stop} {
+				if tc.old != "" {
+					line = strings.Replace(line, tc.old, tc.new, 1)
+				}
+				_, _ = io.WriteString(p.Stdin, line+"\n") // fails once the fake has ended
+			}
+			_ = p.Stdin.Close()
+			err = p.Wait()
+			if failed := f.Err() != nil; failed != tc.fails || (err != nil) != tc.fails {
+				t.Errorf("exit %v, script %v; want it to fail: %v", err, f.Err(), tc.fails)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package claudetest
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -286,6 +287,55 @@ func TestAwaiting(t *testing.T) {
 		t.Fatal("not met while the script waits there")
 	}
 	s.write(t, interrupt)
+	_ = s.Stdin.Close()
+	if err := s.Wait(); err != nil || f.Err() != nil {
+		t.Errorf("%v %v", err, f.Err())
+	}
+}
+
+// Awaiting isn't met by a line the client has written already: not while
+// it is on its way to the script, nor once the step has it but hasn't
+// returned. The steps here hold those moments, which an Expect passes
+// through in no time.
+func TestAwaitingNotByLineWritten(t *testing.T) {
+	user := `{"type":"user"}`
+	var want any
+	if err := json.Unmarshal([]byte(user), &want); err != nil {
+		t.Fatal(err)
+	}
+	gate, took, held := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	slow := Step{name: "slow expect", wants: want, run: func(r *run) error {
+		<-gate // the line is written and on its way
+		if _, _, err := r.expect(want); err != nil {
+			return err
+		}
+		close(took)
+		<-held // the line is taken; the step hasn't returned
+		return nil
+	}}
+	f := New(slow, Expect(user))
+	s := start(t, f)
+	<-f.Awaiting(user)
+	s.write(t, `{"type":"user","uuid":"u-1"}`)
+	early := func(when string) {
+		t.Helper()
+		select {
+		case <-f.Awaiting(user):
+			t.Fatalf("met %s", when)
+		default:
+		}
+	}
+	early("with the line on its way")
+	close(gate)
+	<-took
+	early("with the line taken")
+	close(held)
+	select {
+	case <-f.Awaiting(user): // the next Expect waits now
+	case <-f.Exited():
+		t.Fatalf("the fake ended: %v", f.Err())
+	}
+	s.write(t, `{"type":"user","uuid":"u-2"}`)
 	_ = s.Stdin.Close()
 	if err := s.Wait(); err != nil || f.Err() != nil {
 		t.Errorf("%v %v", err, f.Err())

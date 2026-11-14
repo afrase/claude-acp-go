@@ -76,9 +76,10 @@ func (c *Cassette) parse(n int, line []byte) error {
 }
 
 // Replay is a fake claude that plays c: it expects each line written to
-// the recorded claude, matched loosely (its type, subtype and request's
-// subtype), and writes each line the recorded claude wrote, in the
-// recorded order. The client's ids stand in for the recorded ones in what
+// the recorded claude, matched on what the client decided (its kind, a
+// request's arguments, an answer's outcome and the request it answers, a
+// message's content: expectRecorded has the rule), and writes each line
+// the recorded claude wrote, in the recorded order. The client's ids stand in for the recorded ones in what
 // it writes: the session's (from --session-id and --resume), requests'
 // and user messages', so responses and echoes carry the live ones.
 func Replay(c *Cassette) *Fake {
@@ -126,6 +127,15 @@ func flags(argv []string) map[string]string {
 
 // expectRecorded expects a line like rec, and maps rec's request id and
 // uuid to the line's.
+//
+// It checks what the client decided, not the names it gave or the time:
+// the line's type, subtype and request's subtype; a control_request's
+// other plain fields (stop_task's task_id, set_model's model), except an
+// initialize's, which is the client's own setup; a control_response's
+// subtype, the request it answers and a permission's behavior (allow or
+// deny); a user message's content. Ids, uuids and session ids are read
+// as the live ones the replay has mapped them to; other fields, such as
+// timestamps, hooks and options, aren't checked.
 func expectRecorded(rec json.RawMessage, ids map[string]string) Step {
 	var r struct {
 		Type      string `json:"type"`
@@ -137,17 +147,13 @@ func expectRecorded(rec json.RawMessage, ids map[string]string) Step {
 		} `json:"request"`
 	}
 	_ = json.Unmarshal(rec, &r)
-	want := map[string]any{"type": r.Type}
-	if r.Subtype != "" {
-		want["subtype"] = r.Subtype
-	}
-	if r.Request.Subtype != "" {
-		want["request"] = map[string]any{"subtype": r.Request.Subtype}
-	}
 	var recorded any
 	_ = json.Unmarshal(rec, &recorded)
+	fields, _ := recorded.(map[string]any)
 	return Step{name: strings.TrimSpace("expect recorded " + r.Type + " " + r.Subtype + r.Request.Subtype), wants: recorded, run: func(run *run) error {
-		req, uuid, err := run.expect(want)
+		// Built now, not before: the ids the line names are mapped as
+		// the replay plays.
+		req, uuid, err := run.expect(decided(fields, ids))
 		if err != nil {
 			return err
 		}
@@ -158,6 +164,57 @@ func expectRecorded(rec json.RawMessage, ids map[string]string) Step {
 		}
 		return nil
 	}}
+}
+
+// decided is the part of a recorded stdin line a replay checks (see
+// expectRecorded), as a match for matches, with ids mapped to the live
+// ones.
+func decided(rec map[string]any, ids map[string]string) map[string]any {
+	live := func(v any) any {
+		if s, ok := v.(string); ok && ids[s] != "" {
+			return ids[s]
+		}
+		return v
+	}
+	want := map[string]any{"type": rec["type"]}
+	if v, ok := rec["subtype"]; ok {
+		want["subtype"] = v
+	}
+	switch rec["type"] {
+	case "control_request":
+		request, _ := rec["request"].(map[string]any)
+		w := map[string]any{}
+		for k, v := range request {
+			switch v.(type) {
+			case string, float64, bool:
+				if k == "subtype" || request["subtype"] != "initialize" {
+					w[k] = live(v)
+				}
+			}
+		}
+		if len(w) > 0 {
+			want["request"] = w
+		}
+	case "control_response":
+		response, _ := rec["response"].(map[string]any)
+		w := map[string]any{}
+		for _, k := range []string{"subtype", "request_id"} {
+			if v, ok := response[k]; ok {
+				w[k] = live(v)
+			}
+		}
+		if answer, _ := response["response"].(map[string]any); answer["behavior"] != nil {
+			w["response"] = map[string]any{"behavior": answer["behavior"]}
+		}
+		want["response"] = w
+	case "user":
+		if message, _ := rec["message"].(map[string]any); message != nil {
+			if content, ok := message["content"]; ok {
+				want["message"] = map[string]any{"content": content}
+			}
+		}
+	}
+	return want
 }
 
 // sendRecorded writes rec with the live ids for the recorded ones.

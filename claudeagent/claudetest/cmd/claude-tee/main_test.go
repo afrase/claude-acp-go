@@ -14,8 +14,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
 )
@@ -200,5 +202,56 @@ func TestNotRecorded(t *testing.T) {
 	cmd.Env = append(cmd.Env, "CLAUDE_TEE_REAL=")
 	if err := cmd.Run(); err == nil {
 		t.Error("ran with no claude named")
+	}
+}
+
+// A frame's time is taken as it is written, so the frames' times go up
+// in the file's order even when one copier is held between the two: here
+// the first frame's clock reading waits while the other copier records.
+func TestRecordTimeInOrder(t *testing.T) {
+	var out bytes.Buffer
+	start := time.Now()
+	var mu sync.Mutex
+	ticks := 0
+	reading, release := make(chan struct{}), make(chan struct{})
+	c := &cassette{w: &out, start: start, clock: func() time.Time {
+		mu.Lock()
+		ticks++
+		n := ticks
+		mu.Unlock()
+		if n == 1 {
+			close(reading)
+			<-release
+		}
+		return start.Add(time.Duration(n) * time.Millisecond)
+	}}
+	first := make(chan struct{})
+	go func() {
+		c.record("in", []byte(`{"type":"user"}`))
+		close(first)
+	}()
+	<-reading
+	second := make(chan struct{})
+	go func() {
+		c.record("out", []byte(`{"type":"assistant"}`))
+		close(second)
+	}()
+	select {
+	case <-second: // the second frame didn't wait for the first's
+	case <-time.After(100 * time.Millisecond): // it waits for the lock the first holds
+	}
+	close(release)
+	<-first
+	<-second
+	var last int64
+	for line := range strings.Lines(out.String()) {
+		var f claudetest.Frame
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			t.Fatal(err)
+		}
+		if f.MS < last {
+			t.Errorf("time went back:\n%s", out.String())
+		}
+		last = f.MS
 	}
 }
