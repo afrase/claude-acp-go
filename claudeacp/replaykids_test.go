@@ -286,6 +286,61 @@ func TestLoadRepeatedCallID(t *testing.T) {
 	}
 }
 
+// A SendMessage's message to a subagent replays where the subagent's
+// transcript has it delivered, before the run it started, as live; with
+// no SendMessage to match, the delivered text goes under its own uuid.
+// The subagent is named by its id or its call's name.
+func TestLoadSubagentDelivery(t *testing.T) {
+	for _, tc := range []struct {
+		name, to string
+		want     []string
+	}{
+		{"matched", "agentA", []string{"agentA message toolu_A", "agentA text msg_A1 1 parent=toolu_A",
+			"agentA message toolu_S", "agentA text msg_A2 2 parent=toolu_A"}},
+		{"by name", "counter", []string{"agentA message toolu_A", "agentA text msg_A1 1 parent=toolu_A",
+			"agentA message toolu_S", "agentA text msg_A2 2 parent=toolu_A"}},
+		// The SendMessage's own message then goes at its result, as when
+		// the transcript marks no delivery.
+		{"unmatched", "someone", []string{"agentA message toolu_A", "agentA text msg_A1 1 parent=toolu_A",
+			"agentA message s3", "agentA text msg_A2 2 parent=toolu_A", "agentA message toolu_S"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+			cwd, sid := t.TempDir(), nthUUID(1)
+			p.writeHistory(t, cwd, sid,
+				userRec("u1", "Count"),
+				asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"name":"counter","description":"Count","prompt":"count"}`)),
+				userRec("r1", resultBlocks("toolu_A", "1", false)),
+				asstRec("a2", "msg_2", useBlock("toolu_S", "SendMessage", `{"to":"`+tc.to+`","message":"again"}`)),
+				userRec("r2", resultBlocks("toolu_S", "sent", false), "toolUseResult", map[string]any{"success": true, "resumedAgentId": "agentA"}),
+			)
+			p.writeSubagent(t, cwd, sid, "agentA", "toolu_A",
+				userRec("s1", "count"),
+				asstRec("s2", "msg_A1", textBlock("1")),
+				userRec("s3", "The coordinator sent a message while you were working:\nagain", "origin", map[string]any{"kind": "coordinator"}),
+				asstRec("s4", "msg_A2", textBlock("2")),
+			)
+			if _, err := p.load(sid, cwd); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, l := range p.replayed() {
+				if strings.HasPrefix(l, "agentA ") {
+					got = append(got, l)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
+			}
+			// Its first call's result is still its end, the message having
+			// run it again first.
+			if end := sid + ` subagent {"sessionId":"agentA","state":{"state":"idle","stopReason":"end_turn"}}`; !slices.Contains(p.replayed(), end) {
+				t.Errorf("no end_turn in:\n%s", strings.Join(p.replayed(), "\n"))
+			}
+		})
+	}
+}
+
 // A task notification claude took into a running turn is kept only as a
 // queued_command attachment, and one still queued as claude closed only
 // as a queue-operation: a load reads both for the

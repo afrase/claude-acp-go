@@ -3,6 +3,7 @@ package claudeacp
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -28,6 +29,7 @@ import (
 // says of its end.
 type replayedKid struct {
 	sa         *subagent
+	call       string // the call that started it
 	background bool   // started in the background: its call's result says nothing of its end
 	launched   string // its first call's result: "ok", "cancelled", "failed", or "" with none
 	failure    string // that result's text, when it failed
@@ -88,7 +90,7 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	if sa == nil { // the session is live and has it already
 		return
 	}
-	kid := &replayedKid{sa: sa, background: in.Background, stopped: a.StoppedByUser}
+	kid := &replayedKid{sa: sa, call: call, background: in.Background, stopped: a.StoppedByUser}
 	r.kids = append(r.kids, kid)
 	r.byID[sa.id] = kid
 	store := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}
@@ -99,6 +101,7 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	}
 	ms = stripFork(ms)
 	r.linkResults(ms)
+	r.findSends(ms)
 	if qs, err := store.SubagentQueuedPrompts(r.s.id, r.cwd, a.ID); err == nil {
 		r.place(qs, ms, false)
 	}
@@ -185,7 +188,9 @@ func (r *replayer) called(t *tool, b claudeagent.Block, structured json.RawMessa
 		if json.Unmarshal(structured, &res) != nil || !res.Success {
 			return
 		}
-		if kid := r.byID[res.ResumedAgentID]; kid != nil {
+		// Its message went where the subagent's transcript has it
+		// (delivery), unless the transcript doesn't say.
+		if kid := r.byID[res.ResumedAgentID]; kid != nil && !r.delivered[t.id] {
 			r.s.kids.rerun(kid.sa, t.id, in.Message)
 		}
 	}
@@ -196,10 +201,62 @@ func (r *replayer) called(t *tool, b claudeagent.Block, structured json.RawMessa
 // claude reports that end stopped, which isn't in the transcript.
 var stopWords = regexp.MustCompile(`(?i)\b(?:cancelled|canceled|interrupted|stopped|killed)\b`)
 
+// sendCall is a SendMessage call of the history: to whom, and its
+// message.
+type sendCall struct{ id, to, message string }
+
+// findSends keeps the SendMessage calls in ms, a transcript, for the
+// deliveries of their messages in the transcripts they went to.
+func (r *replayer) findSends(ms []sessions.Message) {
+	for _, m := range ms {
+		var msg claudeagent.APIMessage
+		if m.Type != "assistant" || json.Unmarshal(m.Message, &msg) != nil {
+			continue
+		}
+		for _, b := range msg.Content {
+			var in launch
+			if isToolUse(b.Type) && b.Name == "SendMessage" && json.Unmarshal(b.Input, &in) == nil && in.To != "" && in.Message != "" {
+				r.sends = append(r.sends, sendCall{b.ID, in.To, in.Message})
+			}
+		}
+	}
+}
+
+// delivery replays a user message m, with text, of the subagent of the
+// call stream if a SendMessage delivered it to the subagent (claude marks
+// it origin.kind "coordinator"), as live and as claude-agent-acp replays
+// it: the SendMessage's message to the subagent here, before the run it
+// started. The call is the first not yet delivered to the subagent whose
+// message the text has; with none, the text goes under m's uuid.
+func (r *replayer) delivery(stream string, m sessions.Message, text string) {
+	var rec struct {
+		Origin struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
+	}
+	if strings.TrimSpace(text) == "" || json.Unmarshal(m.Raw, &rec) != nil || rec.Origin.Kind != "coordinator" {
+		return
+	}
+	a, ok := r.agents[stream]
+	kid := r.byID[a.ID]
+	if !ok || kid == nil {
+		return
+	}
+	names := []string{kid.sa.id, r.inputs[kid.call].Name}
+	for _, c := range r.sends {
+		if !r.delivered[c.id] && slices.Contains(names, c.to) && strings.Contains(text, strings.TrimSpace(c.message)) {
+			r.delivered[c.id] = true
+			r.s.kids.rerun(kid.sa, c.id, c.message)
+			return
+		}
+	}
+	r.s.kids.message(kid.sa, m.UUID, text)
+}
+
 // launchOf is the subagent call started, if the replay announced it.
 func (r *replayer) launchOf(call string) *replayedKid {
 	if a, ok := r.agents[call]; ok {
-		if kid := r.byID[a.ID]; kid != nil && kid.sa.call == call {
+		if kid := r.byID[a.ID]; kid != nil && kid.call == call {
 			return kid
 		}
 	}
@@ -314,6 +371,14 @@ func (k *subagents) replayed(id, call, stream string, in launch) *subagent {
 	k.announceLocked(sa, in, "", "")
 	k.delegatedLocked(sa, call, in.Prompt)
 	return sa
+}
+
+// message sends the subagent sa a message, id, that no call of the
+// history names.
+func (k *subagents) message(sa *subagent, id, text string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.delegatedLocked(sa, id, text)
 }
 
 // rerun is the subagent sa run again by the SendMessage call with

@@ -38,6 +38,10 @@ type replayer struct {
 	byAgent map[string]sessions.Subagent // the same transcripts, by subagent
 	queued  map[string][]queuedPrompt    // prompts claude kept other than as user messages, by the message before each
 	said    map[string]bool              // the main transcript's messages' uuids
+	sends   []sendCall                   // the SendMessage calls, in order
+	// delivered are the SendMessage calls whose message a subagent's
+	// transcript has, replayed there.
+	delivered map[string]bool
 }
 
 // queuedPrompt is a prompt claude kept other than as a user message, and
@@ -57,12 +61,13 @@ type callKey struct{ stream, id string }
 func (s *session) replay(ms []sessions.Message, cwd string) {
 	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
 		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{},
-		queued: map[string][]queuedPrompt{}, said: map[string]bool{}}
+		queued: map[string][]queuedPrompt{}, said: map[string]bool{}, delivered: map[string]bool{}}
 	for _, m := range ms {
 		r.said[m.UUID] = true
 	}
 	if s.kids.children {
 		r.findAgents(ms)
+		r.findSends(ms)
 	}
 	r.findQueued(ms)
 	r.messages(ms, "")
@@ -147,6 +152,15 @@ func (r *replayer) user(stream string, m sessions.Message, msg claudeagent.APIMe
 		}
 		_ = json.Unmarshal(m.Raw, &rec)
 		structured = rec.Result
+	}
+	if stream != "" {
+		var text []string
+		for _, b := range msg.Content {
+			if b.Type == "text" {
+				text = append(text, b.Text)
+			}
+		}
+		r.delivery(stream, m, strings.Join(text, "\n"))
 	}
 	for _, b := range msg.Content {
 		switch b.Type {
