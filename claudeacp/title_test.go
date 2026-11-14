@@ -118,3 +118,30 @@ func TestTitleFromTranscript(t *testing.T) {
 		t.Errorf("asked %q", got)
 	}
 }
+
+// A reopened session with no title is titled from its conversation, the
+// history included, not from the first prompt after the load alone.
+func TestTitleAfterResume(t *testing.T) {
+	done := make(chan struct{})
+	f := started(`{}`, `"Fixing the login page"`, user("id1"), echo("id1"), assistant(`{"type":"text","text":"Running them."}`),
+		result(names("id1")), claudetest.Send(idle), signal(done))
+	p := start(t, nil, f)
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "Fix the login page"), asstRec("a1", "msg_1", textBlock("Fixed it.")),
+		userRec("u2", "<command-name>/cost</command-name>"))
+	if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	stopReason(p.prompt(t, acp.SessionID(sid), "please run the tests again"))
+	wait(t, done, "the script")
+	eventually(t, "the ask", func() bool { return len(responded(f)) == 1 })
+	var ask struct {
+		Request struct{ Description string } `json:"request"`
+	}
+	if err := json.Unmarshal([]byte(responded(f)[0]), &ask); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Fix the login page\nFixed it.\nplease run the tests again\nRunning them.\n"; ask.Request.Description != want {
+		t.Errorf("made from %q, want %q", ask.Request.Description, want)
+	}
+}

@@ -32,8 +32,9 @@ func (s *session) canUseTool(ctx context.Context, r claudeagent.PermissionReques
 	stopped := s.dropTop && r.AgentID == "" // a subagent's work goes on
 	s.mu.Unlock()
 	if stopped {
-		return claudeagent.Deny{Message: "The user cancelled this prompt.", Interrupt: true}, nil
+		return stoppedWork, nil
 	}
+	s.a.paused("ask")
 	if r.ToolName == "AskUserQuestion" {
 		return s.askUser(ctx, r)
 	}
@@ -52,7 +53,10 @@ func (s *session) canUseTool(ctx context.Context, r claudeagent.PermissionReques
 		offered = alwaysOptions(r, s.cwd)
 		opts = permissionOptions(offered, r.DefaultToNo)
 	}
-	ctx, done := s.opened(ctx, r.AgentID)
+	ctx, done, stopped := s.openedForWork(ctx, r.AgentID)
+	if stopped {
+		return stoppedWork, nil
+	}
 	defer done()
 	resp, err := s.a.client.RequestPermission(ctx, &acp.RequestPermissionRequest{
 		SessionID: acp.SessionID(s.kids.sessionOf(r.AgentID)), ToolCall: call, Options: opts})
@@ -60,7 +64,7 @@ func (s *session) canUseTool(ctx context.Context, r claudeagent.PermissionReques
 		s.log.Info("asking for a permission", "err", err)
 	}
 	if r.ToolName == "ExitPlanMode" && err == nil && resp != nil && resp.Outcome.Selected != nil {
-		return s.exitPlan(string(resp.Outcome.Selected.OptionID)), nil
+		return s.exitPlan(string(resp.Outcome.Selected.OptionID), opts), nil
 	}
 	return permissionResult(offered, resp, err), nil
 }
@@ -146,13 +150,34 @@ type ask struct {
 	withdrawn bool   // a cancel withdrew it
 }
 
+// stoppedWork is claude's answer to what the work a cancel stopped asks.
+var stoppedWork = claudeagent.Deny{Message: "The user cancelled this prompt.", Interrupt: true}
+
 // opened counts a permission or question the user is asked while it is
 // open, so steers wait behind it and a cancel withdraws it, and a
 // subagent asking requires action meanwhile; done closes it.
 func (s *session) opened(ctx context.Context, agent string) (context.Context, func()) {
+	ctx, done, _ := s.open1(ctx, agent, false)
+	return ctx, done
+}
+
+// openedForWork is opened for what claude's work asks, unless a cancel
+// has stopped that work (the top level's, until a turn starts): stopped
+// says so, and nothing is opened. It is checked as the request opens, so
+// a cancel either withdraws the request or comes before it.
+func (s *session) openedForWork(ctx context.Context, agent string) (_ context.Context, done func(), stopped bool) {
+	return s.open1(ctx, agent, true)
+}
+
+func (s *session) open1(ctx context.Context, agent string, work bool) (context.Context, func(), bool) {
 	ctx, cancel := context.WithCancel(ctx)
 	a := &ask{cancel: cancel, agent: agent}
 	s.mu.Lock()
+	if work && agent == "" && s.dropTop {
+		s.mu.Unlock()
+		cancel()
+		return ctx, func() {}, true
+	}
 	s.open[a] = struct{}{}
 	s.mu.Unlock()
 	if agent != "" {
@@ -167,7 +192,7 @@ func (s *session) opened(ctx context.Context, agent string) (context.Context, fu
 		if agent != "" {
 			s.kids.asking(agent, -1, withdrawn)
 		}
-	}
+	}, false
 }
 
 // withdraw withdraws the open requests which says.

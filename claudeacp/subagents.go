@@ -176,12 +176,23 @@ func (k *subagents) sessionOf(agent string) string {
 }
 
 // inBackground says the subagent agent runs in the background, where a
-// cancel of the session's turn doesn't reach.
+// cancel of the session's turn doesn't reach: it, or a subagent it runs
+// under (a background subagent's foreground one), is in the background
+// and still running.
 func (k *subagents) inBackground(agent string) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	sa := k.byID[agent]
-	return sa != nil && sa.background && !sa.ended
+	for range len(k.byID) { // a cycle can't hold it
+		switch {
+		case sa == nil || sa.ended:
+			return false
+		case sa.background:
+			return true
+		}
+		sa = k.byID[sa.parent]
+	}
+	return false
 }
 
 // stopsWith says the subagent agent stops when claude stops the subagent
@@ -271,7 +282,10 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 	if p != nil && p.shown {
 		sa.on = p.id
 	}
-	k.announceLocked(sa, in, m.SubagentType, m.Description)
+	// One resumed after a restart (a SendMessage's: its call names no
+	// role) is named as the history has it, as claude-agent-acp names it.
+	in.Name = cmp.Or(in.Name, from.Name)
+	k.announceLocked(sa, in, cmp.Or(m.SubagentType, from.AgentType), cmp.Or(m.Description, from.Description))
 	k.delegatedLocked(sa, sa.call, cmp.Or(in.Prompt, m.Prompt, in.Message))
 	if launched != "" && k.byCall[launched] == sa {
 		k.flushLocked(launched, sa.id)
@@ -339,7 +353,8 @@ func (k *subagents) delegatedLocked(sa *subagent, call, prompt string) {
 	if call == "" {
 		return
 	}
-	m := &acp.SessionMessage{MessageID: acp.MessageID(call), RecipientSessionID: acp.SessionID(sa.id)}
+	to := acp.SessionID(sa.id)
+	m := &acp.SessionMessage{MessageID: acp.MessageID(call), RecipientSessionID: acp.Nullable[acp.SessionID]{Value: &to, Present: true}}
 	if prompt != "" {
 		c := []acp.ContentBlock{{Text: &acp.TextContent{Text: prompt}}}
 		m.Content = acp.Nullable[[]acp.ContentBlock]{Value: &c, Present: true}

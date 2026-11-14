@@ -120,9 +120,7 @@ func (c *client) replayed() []string {
 			line += "update " + string(u.ToolCallUpdate.ToolCallID) + " " + string(u.ToolCallUpdate.Status)
 		case u.SubagentUpdate != nil:
 			b, _ := json.Marshal(u.SubagentUpdate)
-			// acp-go v0.2.0 encodes an idle state with no reason, as it
-			// decoded it, with its tag twice.
-			line += "subagent " + strings.ReplaceAll(string(b), `"state":"idle","state":"idle"`, `"state":"idle"`)
+			line += "subagent " + string(b)
 		case u.SessionMessage != nil:
 			line += "message " + string(u.SessionMessage.MessageID)
 		case u.AvailableCommandsUpdate != nil:

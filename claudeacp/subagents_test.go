@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	acp "github.com/afrase/acp-go/unstable"
 
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
+	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
 // withSubagents is a client that takes subagents as sessions of their own.
@@ -49,12 +52,6 @@ func (c *client) states() []string {
 	var out []string
 	for _, n := range c.notes() {
 		if su := n.Update.SubagentUpdate; su != nil && su.SessionID == "a1" && !su.Title.Present {
-			if st := su.State.Value; st != nil && st.Idle != nil && st.Idle.StopReason == "" {
-				// acp-go keeps a reasonless idle whole, and encodes it again
-				// with its tag twice.
-				out = append(out, `{"state":"idle"}`)
-				continue
-			}
 			b, _ := json.Marshal(su.State)
 			out = append(out, string(b))
 		}
@@ -259,34 +256,57 @@ func TestSubagentAsks(t *testing.T) {
 			t.Errorf("claude was asked %v", got)
 		}
 	})
-	t.Run("the turn cancelled", func(t *testing.T) {
-		opened, release := make(chan struct{}), make(chan struct{})
-		f := fake(user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), agentDone, ask,
-			claudetest.Until(release), result(names("id2")), claudetest.Send(idle),
-			answers("toolu_s", `{"behavior":"allow"}`))
-		p := start(t, withSubagents, f)
-		withdrawn := make(chan bool, 1)
-		p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
-			close(opened)
-			<-release
-			withdrawn <- ctx.Err() != nil
-			return pick(optAllowOnce)(ctx, req)
-		}
-		sid := p.open(t)
-		w := p.prompt(t, sid, "go")
-		wait(t, opened, "the request")
-		if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: sid}); err != nil {
-			t.Fatal(err)
-		}
-		eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
-		close(release)
-		if got := stopReason(w); got != "cancelled" {
-			t.Fatal(got)
-		}
-		if <-withdrawn {
-			t.Error("the turn's cancel withdrew a background subagent's request")
-		}
-	})
+	// b2 runs in the foreground of the background a1: the cancel spares
+	// it too.
+	inner := []claudetest.Step{
+		sendf(`{"type":"assistant","parent_tool_use_id":"toolu_p","message":{"id":"msg_s","content":[{"type":"tool_use","id":"toolu_q","name":"Agent",` +
+			`"input":{"description":"Inner","prompt":"go"}}]}}`),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"b2","tool_use_id":"toolu_q","parent_task_id":"a1","task_type":"local_agent",` +
+			`"subagent_type":"general-purpose","is_backgrounded":false}`),
+		canUseTool("toolu_s", "Bash", `{"command":"ls"}`, `,"agent_id":"b2"`),
+	}
+	for _, tc := range []struct {
+		name string
+		ask  []claudetest.Step
+	}{{"the turn cancelled", []claudetest.Step{ask}}, {"the turn cancelled, a background subagent's subagent asking", inner}} {
+		t.Run(tc.name, func(t *testing.T) {
+			testTurnCancelSpares(t, tc.ask)
+		})
+	}
+}
+
+// testTurnCancelSpares has the background subagent a1's work ask
+// (steps), cancels the turn, and checks the request isn't withdrawn.
+func testTurnCancelSpares(t *testing.T, ask []claudetest.Step) {
+	t.Helper()
+	opened, release := make(chan struct{}), make(chan struct{})
+	steps := []claudetest.Step{user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), agentDone}
+	steps = append(steps, ask...)
+	steps = append(steps, claudetest.Until(release), result(names("id2")), claudetest.Send(idle),
+		answers("toolu_s", `{"behavior":"allow"}`))
+	f := fake(steps...)
+	p := start(t, withSubagents, f)
+	withdrawn := make(chan bool, 1)
+	p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+		close(opened)
+		<-release
+		withdrawn <- ctx.Err() != nil
+		return pick(optAllowOnce)(ctx, req)
+	}
+	sid := p.open(t)
+	w := p.prompt(t, sid, "go")
+	wait(t, opened, "the request")
+	if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: sid}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
+	close(release)
+	if got := stopReason(w); got != "cancelled" {
+		t.Fatal(got)
+	}
+	if <-withdrawn {
+		t.Error("the turn's cancel withdrew a background subagent's request")
+	}
 }
 
 // Stopping a subagent stops the foreground subagents it waits on too:
@@ -551,7 +571,7 @@ func shape(notes []acp.SessionNotification, root acp.SessionID) (lines []string)
 			b, _ := json.Marshal(u.SubagentUpdate)
 			line = sid + " subagent " + string(b)
 		case u.SessionMessage != nil:
-			line = sid + " message " + string(u.SessionMessage.MessageID) + " to " + string(u.SessionMessage.RecipientSessionID)
+			line = sid + " message " + string(u.SessionMessage.MessageID) + " to " + string(*u.SessionMessage.RecipientSessionID.Value)
 		case u.ToolCall != nil:
 			cc := claudeMeta(u.ToolCall.Meta)
 			line = sid + " call " + string(u.ToolCall.ToolCallID) + " " + str(cc["toolName"]) + " " + string(u.ToolCall.Status) + parentOf(cc)
@@ -635,6 +655,10 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 		asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count","run_in_background":true}`)),
 		userRec("r1", resultBlocks("toolu_A", "Async agent launched", false)))
 	p.writeSubagent(t, cwd, sid, "a1", "toolu_A", userRec("s1", "count"), asstRec("s2", "msg_A1", textBlock("1")))
+	meta := filepath.Join(sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.ProjectDir(cwd), sid, "subagents", "agent-a1.meta.json")
+	if err := os.WriteFile(meta, []byte(`{"agentType":"general-purpose","name":"counter","description":"Count","toolUseId":"toolu_A"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
@@ -644,7 +668,7 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 	got := shape(p.notes(), acp.SessionID(sid))
 	want := []string{
 		"s1 call toolu_m SendMessage pending",
-		`s1 subagent {"sessionId":"a1","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
+		`s1 subagent {"sessionId":"a1","title":"counter (general-purpose)","description":"Count","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
 		"a1 message toolu_m to a1",
 		"a1 call toolu_2 Bash pending parent=toolu_A",
 		"a1 update toolu_2 completed parent=toolu_A",
@@ -654,5 +678,32 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// What a subagent's stream was writing is forgotten once the subagent
+// ends: a long session doesn't keep every subagent's last message.
+func TestSubagentStreamForgotten(t *testing.T) {
+	stream := func(e string) claudetest.Step {
+		return sendf(`{"type":"stream_event","parent_tool_use_id":"toolu_p","event":` + e + `}`)
+	}
+	p := start(t, nil, fake(user("id2"), echo("id2"), agentCall(false), taskStarted(""),
+		stream(`{"type":"message_start","message":{"id":"msg_s"}}`),
+		stream(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_s","name":"Write","input":{}}}`),
+		stream(`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"content\":\"big\""}}`),
+		subagentCall("toolu_p", "toolu_t"),
+		taskEnd("completed"), agentDone, result(names("id2")), claudetest.Send(idle)))
+	sid := p.open(t)
+	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	s, _ := p.agent.session(sid)
+	// The prompt's answer came after the subagent's end was handled.
+	_, msgs := s.st.msgs["toolu_p"]
+	s.tools.mu.Lock()
+	_, streaming := s.tools.streaming["toolu_p"]
+	s.tools.mu.Unlock()
+	if msgs || streaming {
+		t.Errorf("kept: message %v, tool uses %v", msgs, streaming)
 	}
 }

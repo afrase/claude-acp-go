@@ -133,7 +133,7 @@ func TestSubagents(t *testing.T) {
 		text("user", "c-u", "", "nested"), text("assistant", "c-a", "c-u", "ok"),
 		rec("progress", "c-p", "c-a"))
 	files := map[string]string{
-		"agent-b2.meta.json":                    `{"toolUseId":"toolu_b","agentType":"general-purpose","worktreePath":"/r/w"}`,
+		"agent-b2.meta.json":                    `{"toolUseId":"toolu_b","agentType":"general-purpose","name":"counter","description":"Count","worktreePath":"/r/w"}`,
 		"agent-a1.meta.json":                    `not json`,
 		"workflows/run-1/agent-c3.meta.json":    `{"toolUseId":"toolu_c","parentAgentId":"b2","requestShape":"background","stoppedByUser":true}`,
 		"notes.txt":                             "x",
@@ -150,7 +150,7 @@ func TestSubagents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Subagent{{ID: "a1"}, {ID: "b2", ParentToolUseID: "toolu_b", WorktreePath: "/r/w"},
+	want := []Subagent{{ID: "a1"}, {ID: "b2", ParentToolUseID: "toolu_b", WorktreePath: "/r/w", Name: "counter", AgentType: "general-purpose", Description: "Count"},
 		{ID: "c3", ParentToolUseID: "toolu_c", ParentAgentID: "b2", Background: true, StoppedByUser: true}}
 	if len(got) != len(want) {
 		t.Fatalf("Subagents = %+v", got)

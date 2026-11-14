@@ -26,9 +26,12 @@ import (
 // The test binary plays two parts for TestClaudeEndsWithTheAgent, as
 // CLAUDEACP_TEST_ROLE says: the agent (Main) and a stand-in claude.
 func TestMain(m *testing.M) {
+	managedSettings = "" // the machine's own aren't the tests'
 	switch os.Getenv("CLAUDEACP_TEST_ROLE") {
 	case "agent":
-		Main()
+		if Main() != nil {
+			os.Exit(1)
+		}
 		os.Exit(0)
 	case "claude":
 		os.Exit(standInClaude())
@@ -164,4 +167,30 @@ func standInPID(t *testing.T, path string) int {
 		t.Fatal(err)
 	}
 	return pid
+}
+
+// An agent whose connection to the client breaks (here its stdin can't
+// be read) exits with an error, not 0 as if the client had gone.
+func TestBrokenConnectionExits1(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs processes")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	stdin, err := os.Open(dir) // read(2) of a folder fails: EISDIR
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close() }()
+	cmd := exec.Command(self)
+	cmd.Env = append(os.Environ(), "CLAUDEACP_TEST_ROLE=agent", "HOME="+dir, "CLAUDE_CONFIG_DIR="+dir, "GORACE=atexit_sleep_ms=0")
+	cmd.Stdin = stdin
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Errorf("the agent ended %v, want exit status 1\n%s", err, out)
+	}
 }

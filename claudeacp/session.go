@@ -22,7 +22,7 @@ import (
 // The order its locks nest in: a lock may be taken while one to its left
 // on a line is held, never the other way round.
 //
-//	wmu → mu → kids.mu
+//	mu → kids.mu
 //	tools.mu → kids.mu
 //	cfg.changing → cfg.mu
 //	cfg.changing → win.mu → agent.windows.mu
@@ -41,10 +41,6 @@ type session struct {
 	log    *slog.Logger
 	stderr *stderrLog // claude's
 
-	// wmu orders the user messages written with the turns they join: the
-	// queue's order is claude's.
-	wmu sync.Mutex
-
 	mu       sync.Mutex
 	turns    []*turn           // unsettled prompts, in the order written
 	active   *turn             // the one claude runs, from its echo; nil between turns
@@ -52,11 +48,23 @@ type session struct {
 	owedIdle int               // idles still to come after results that ended a turn
 	open     map[*ask]struct{} // the permission and question requests open
 	closed   bool              // closed or gone: no more prompts
+	// written orders what the turns write to claude (user messages, a
+	// cancel's drops and interrupt) as the turns changed under mu: each
+	// writer takes its place under mu (nextWriteLocked), waits for the
+	// one before it to be written, then writes. So claude's queue is in
+	// the turns' order, and a cancel's interrupt never overtakes the
+	// prompt it stops.
+	written chan struct{}
+	// cancelSeq is where the latest session/cancel came among the
+	// client's messages (acp.SequenceFromContext): a prompt or steer from
+	// before it that registers after it is cancelled already.
+	cancelSeq uint64
 
 	tools tools     // the tool calls shown
 	kids  subagents // its subagents, through which every update of a stream goes
 
 	cwd   string
+	setup string // the fingerprint of the setup it started with
 	cfg   config // its modes and options
 	cmds  commands
 	title titles
@@ -73,12 +81,13 @@ type session struct {
 }
 
 func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
-	o, err := a.options(setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers, systemPrompt: req.SystemPrompt, meta: req.Meta})
+	su := setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers, systemPrompt: req.SystemPrompt, meta: req.Meta}
+	o, err := a.options(su)
 	if err != nil {
 		return nil, err
 	}
 	o.SessionID = a.newID() // so the ACP session's id is claude's
-	s, err := a.start(ctx, o.SessionID, o)
+	s, err := a.start(ctx, o.SessionID, o, su, "")
 	if err != nil {
 		return nil, err
 	}
@@ -87,10 +96,13 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 	return &acp.NewSessionResponse{SessionID: acp.SessionID(s.id), Modes: modes, ConfigOptions: opts}, nil
 }
 
-// start runs claude for session id and opens the session once claude has
-// answered initialize.
-func (a *agent) start(ctx context.Context, id string, o claudeagent.Options) (*session, error) {
-	s := &session{a: a, id: id, cwd: o.Cwd, log: a.log.With("session", id), read: make(chan struct{}), tick: make(chan struct{}), open: map[*ask]struct{}{}}
+// start runs claude for session id, set up as su asked (o), and opens
+// the session once claude has answered initialize. resumed is the model
+// a resumed session's history last ran on, which claude resumes it on.
+func (a *agent) start(ctx context.Context, id string, o claudeagent.Options, su setup, resumed string) (*session, error) {
+	s := &session{a: a, id: id, cwd: o.Cwd, setup: su.fingerprint(), log: a.log.With("session", id), read: make(chan struct{}), tick: make(chan struct{}), open: map[*ask]struct{}{}}
+	s.written = make(chan struct{})
+	close(s.written) // nothing to wait for
 	s.st.init()
 	s.kids.init(id, a.clientCaps().subagents, a.update)
 	s.tools.init(o.Cwd, &s.kids, a.newID)
@@ -113,7 +125,7 @@ func (a *agent) start(ctx context.Context, id string, o claudeagent.Options) (*s
 	}
 	s.cs = cs
 	s.cfg.send, s.cfg.log, s.cfg.claude = s.update, s.log, cs
-	s.cfg.init(o, cs.Init(), a.clientCaps().booleans)
+	s.cfg.init(o, cs.Init(), resumed, a.clientCaps().booleans)
 	if ir := cs.Init(); ir != nil {
 		s.cmds.list = ir.Commands
 	}
@@ -192,19 +204,30 @@ var died = &acp.Error{Code: acp.ErrorCodeInternalError, Message: "The Claude pro
 // errEnded is what a prompt for a session closing gets.
 var errEnded = &acp.Error{Code: acp.ErrorCodeInternalError, Message: "The Claude session has ended. Please start a new session."}
 
-// send writes a prompt's user message and queues its turn.
+// send writes a prompt's user message and queues its turn. ctx is the
+// prompt's request's: a prompt the client cancelled before its turn got
+// here is answered cancelled, and claude never gets it.
 func (s *session) send(ctx context.Context, content []claudeagent.Block) (*turn, error) {
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
+	s.a.paused("register")
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nil, errEnded
 	}
 	t := newTurn(s.a.newID())
+	if s.cancelledBeforeLocked(ctx) {
+		s.settleLocked(t, cancelled(t))
+		s.mu.Unlock()
+		return t, nil
+	}
 	s.turns = append(s.turns, t)
+	prev, mine := s.nextWriteLocked()
 	s.mu.Unlock()
-	if _, err := s.cs.Send(ctx, claudeagent.UserInput{Content: content, UUID: t.id}); err != nil {
+	<-prev
+	s.a.paused("write")
+	_, err := s.cs.Send(ctx, claudeagent.UserInput{Content: content, UUID: t.id})
+	close(mine)
+	if err != nil {
 		s.mu.Lock()
 		s.settleLocked(t, outcome{err: err})
 		s.mu.Unlock()
@@ -214,6 +237,29 @@ func (s *session) send(ctx context.Context, content []claudeagent.Block) (*turn,
 		return nil, fmt.Errorf("writing the prompt to claude: %w", err)
 	}
 	return t, nil
+}
+
+func (a *agent) paused(at string) {
+	if a.pause != nil {
+		a.pause(at)
+	}
+}
+
+// cancelledBeforeLocked says a session/cancel came after the request
+// ctx is for, which is still setting up: acp-go starts a request's
+// handler before it reads on, but the cancel's runs beside it.
+func (s *session) cancelledBeforeLocked(ctx context.Context) bool {
+	seq, ok := acp.SequenceFromContext(ctx)
+	return ok && seq < s.cancelSeq
+}
+
+// nextWriteLocked takes the next place among the turns' writes to claude:
+// the writer waits for prev, writes, and closes mine, whether or not
+// its write went.
+func (s *session) nextWriteLocked() (prev <-chan struct{}, mine chan struct{}) {
+	prev, mine = s.written, make(chan struct{})
+	s.written = mine
+	return prev, mine
 }
 
 // closeWait is how long close waits for claude to take an interrupt. With
@@ -226,7 +272,8 @@ const closeWait = 2 * time.Second
 // answered cancelled, and claude closed. It returns once claude has
 // exited and the reader is done, and does nothing the second time.
 func (s *session) close() {
-	s.a.forget(s)
+	done := s.a.closingStart(s)
+	defer done()
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -275,13 +322,15 @@ type background struct {
 	closed bool
 }
 
-// Go runs fn on a goroutine of the session's, unless it has closed.
-func (b *background) Go(fn func()) {
+// Go runs fn on a goroutine of the session's, unless it has closed;
+// false: it hasn't run fn.
+func (b *background) Go(fn func()) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !b.closed {
 		b.wg.Go(fn)
 	}
+	return !b.closed
 }
 
 // wait waits for the goroutines running, and starts no more.

@@ -92,18 +92,32 @@ func patched(raw json.RawMessage) ([]acp.ToolCallContent, []acp.ToolCallLocation
 		if before == nil && after == nil {
 			continue
 		}
+		old := oldText(strings.Join(before, "\n"))
+		if old == nil && r.Type == "update" {
+			// A Write over a file that was there, even empty: not a new file.
+			old = new("")
+		}
 		diffs = append(diffs, acp.ToolCallContent{Diff: &acp.Diff{Path: r.FilePath,
-			OldText: strings.Join(before, "\n"), NewText: strings.Join(after, "\n")}})
+			OldText: old, NewText: strings.Join(after, "\n")}})
 		locations = append(locations, acp.ToolCallLocation{Path: r.FilePath, Line: h.NewStart})
 	}
 	if diffs == nil && r.Type == "update" && r.Content != nil {
 		whole := textContent("Updated `" + r.FilePath + "` (previous content too large to diff)")
 		if r.OriginalFile != nil {
-			whole = acp.ToolCallContent{Diff: &acp.Diff{Path: r.FilePath, OldText: *r.OriginalFile, NewText: *r.Content}}
+			whole = acp.ToolCallContent{Diff: &acp.Diff{Path: r.FilePath, OldText: r.OriginalFile, NewText: *r.Content}}
 		}
 		return []acp.ToolCallContent{whole}, at(r.FilePath, nil)
 	}
 	return diffs, locations
+}
+
+// oldText is a diff's old side: none for "", as claude-agent-acp has it,
+// so an Edit of nothing or a hunk that only adds shows no old text.
+func oldText(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // noNewline is the line a patch's hunk has where its file doesn't end

@@ -164,3 +164,22 @@ func TestListTitle(t *testing.T) {
 		}
 	}
 }
+
+// A fork's commands go once the fork's answer has, as a new session's do.
+func TestForkCommands(t *testing.T) {
+	p := start(t, nil, started(`{"commands":[{"name":"review","description":"Review a change"}]}`, `null`))
+	from, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, from, sid, conversation()...)
+	r, err := p.ForkSession(context.Background(), &acp.ForkSessionRequest{SessionID: acp.SessionID(sid), Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the fork's commands", func() bool {
+		for _, n := range p.notes() {
+			if n.SessionID == r.SessionID && n.Update.AvailableCommandsUpdate != nil {
+				return true
+			}
+		}
+		return false
+	})
+}

@@ -313,10 +313,13 @@ func (ts *tools) end(why callEnd) (incomplete bool) {
 const stoppedText = "The subagent stopped before this call had a result."
 
 // endSubagent ends the open calls of the subagent agent, whose stream is
-// one of calls.
+// one of calls, and forgets the tool uses those streams had under way.
 func (ts *tools) endSubagent(agent string, calls map[string]bool) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	for c := range calls {
+		delete(ts.streaming, c)
+	}
 	for _, id := range slices.Sorted(maps.Keys(ts.byID)) {
 		if t := ts.byID[id]; !t.ended && (calls[t.parent] || t.parent == "" && t.agent == agent) {
 			t.ended = true

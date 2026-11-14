@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync"
 
@@ -19,7 +20,8 @@ import (
 // is replayed), resume (without the history), and fork (a copy, resumed).
 // A session claude has no transcript of is resourceNotFound: clients
 // start a new session then, and may forget the old one. An open session
-// is answered as it is.
+// is answered as it is, unless the request sets it up otherwise (setup's
+// fingerprint): then claude is closed and resumes it so.
 
 // startError is what a failed start of claude says. A resume claude
 // ended on before it answered is resourceNotFound only when the session's
@@ -83,8 +85,17 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	}
 	unlock := a.opening(id)
 	defer unlock()
+	a.waitClosed(id) // a claude still ending would write over the one resuming it
 	s, err := a.session(acp.SessionID(id))
 	open := err == nil
+	if open && s.setup != su.fingerprint() {
+		// The client moved the session (another folder, MCP servers or
+		// prompt): claude runs it again so, in the mode it was in, as
+		// claude-agent-acp does. Else claude would go on in the old setup.
+		o.PermissionMode = s.cfg.currentMode()
+		s.close() //nolint:contextcheck // closing runs to its end: the request's ctx doesn't bound it
+		open = false
+	}
 	var t *sessions.Transcript
 	var ms []sessions.Message
 	if !open || replay {
@@ -94,9 +105,10 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	}
 	if !open {
 		o.Resume = id
-		if s, err = a.start(ctx, id, o); err != nil {
+		if s, err = a.start(ctx, id, o, su, lastModel(ms)); err != nil {
 			return nil, err
 		}
+		s.title.heardBefore(ms)
 	}
 	if replay {
 		s.replay(ms, t)
@@ -138,18 +150,21 @@ func (a *agent) opening(id string) (unlock func()) {
 }
 
 func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*acp.ForkSessionResponse, error) {
-	o, err := a.options(setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers,
-		systemPrompt: req.SystemPrompt, meta: req.Meta})
+	su := setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers,
+		systemPrompt: req.SystemPrompt, meta: req.Meta}
+	o, err := a.options(su)
 	if err != nil {
 		return nil, err
 	}
 	id := string(req.SessionID)
-	var from string // the folder whose history has the session: the open one's, else any
+	a.waitClosed(id) // its transcript is whole once claude has exited
+	var from string  // the folder whose history has the session: the open one's, else any
 	if s, err := a.session(req.SessionID); err == nil {
 		from = s.cwd
 	}
 	var t *sessions.Transcript
-	if t, _, from, err = a.findHistory(ctx, id, from); err != nil {
+	var ms []sessions.Message
+	if t, ms, from, err = a.findHistory(ctx, id, from); err != nil {
 		return nil, err
 	}
 	store := sessions.Store{ConfigDir: a.cfg.ConfigDir}
@@ -164,7 +179,10 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		return nil, &acp.Error{Code: acp.ErrorCodeInternalError, Message: fmt.Sprintf("Forking the session: %v", err)}
 	}
 	o.Resume = fork
-	s, err := a.start(ctx, fork, o)
+	s, err := a.start(ctx, fork, o, su, lastModel(ms))
+	if err == nil {
+		s.title.heardBefore(ms)
+	}
 	if err != nil {
 		// The fork's transcript, made for a session that never ran, goes
 		// with it rather than show in session/list.
@@ -176,6 +194,24 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 	a.out.after(s.id, s.cmds.sendAll)
 	modes, opts := s.cfg.state()
 	return &acp.ForkSessionResponse{SessionID: acp.SessionID(s.id), Modes: modes, ConfigOptions: opts}, nil
+}
+
+// lastModel is the model of the last assistant message of ms that the
+// model wrote, not claude ("<synthetic>"): the one claude resumes the
+// session on.
+func lastModel(ms []sessions.Message) string {
+	for _, m := range slices.Backward(ms) {
+		if m.Type != "assistant" {
+			continue
+		}
+		var msg struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(m.Message, &msg) == nil && msg.Model != "" && msg.Model != synthetic {
+			return msg.Model
+		}
+	}
+	return ""
 }
 
 // forkAt is the message a fork is cut after, from

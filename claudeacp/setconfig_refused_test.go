@@ -26,7 +26,7 @@ func TestSetConfigRefusedByClaude(t *testing.T) {
 		{"mode", "plan", "the mode"},
 		{"model", "sonnet", "the model"},
 		{"effort", "high", "the effort"},
-		{"fast", "on", "the fast"}, // sic: setFlag names the option by its id
+		{"fast", "on", "fast mode"},
 	} {
 		_, err := p.SetSessionConfigOption(t.Context(), &acp.SetSessionConfigOptionRequest{SessionID: r.SessionID, ConfigID: acp.SessionConfigID(tc.id),
 			ValueID: &acp.SetSessionConfigOptionRequestValueID{Value: acp.SessionConfigValueID(tc.value)}})

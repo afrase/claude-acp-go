@@ -32,7 +32,8 @@ type Config struct {
 }
 
 // readLimit caps a message from the client: a prompt with images can run
-// to tens of MiB.
+// to tens of MiB. A larger one is skipped (a request is answered Invalid
+// request) and the connection goes on.
 const readLimit = 64 << 20
 
 // agent is the ACP agent: the client's connection and the sessions open
@@ -46,11 +47,18 @@ type agent struct {
 	log    *slog.Logger
 	after  func(time.Duration) <-chan time.Time // the clock; tests give a fake one
 	newID  func() string                        // session and message ids; tests give counted ones
+	// pause, when a test sets it, runs at points of a prompt's way to
+	// claude: "register" as its turn is about to be queued (a prompt slow
+	// to set up), "write" as its user message is about to be written (a
+	// big one being encoded); "ask" as a permission or question claude
+	// asks is about to be put to the user.
+	pause func(at string)
 
 	mu        sync.Mutex
 	caps      clientCaps
 	sessions  map[string]*session
-	reopening map[string]*reopener // by session id: one load or resume of each at a time
+	reopening map[string]*reopener     // by session id: one load or resume of each at a time
+	closing   map[string]chan struct{} // by session id: closed once its close is done
 
 	windows windows // the context windows results have said (window.go)
 }
@@ -189,6 +197,43 @@ func (a *agent) forget(s *session) {
 	}
 }
 
+// closingStart removes s from the open sessions as its close starts: its
+// id is closing, and waitClosed waits until done says the close is done
+// (claude has exited).
+func (a *agent) closingStart(s *session) (done func()) {
+	ch := make(chan struct{})
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sessions[s.id] == s {
+		delete(a.sessions, s.id)
+	}
+	if a.closing == nil {
+		a.closing = map[string]chan struct{}{}
+	}
+	if a.closing[s.id] != nil {
+		return func() {} // a close of it is under way: it says when done
+	}
+	a.closing[s.id] = ch
+	return func() {
+		a.mu.Lock()
+		delete(a.closing, s.id)
+		a.mu.Unlock()
+		close(ch)
+	}
+}
+
+// waitClosed waits until no close of session id is under way, so what
+// comes next (a delete of its files, a claude resuming it) doesn't meet
+// a claude still writing its transcript as it ends.
+func (a *agent) waitClosed(id string) {
+	a.mu.Lock()
+	ch := a.closing[id]
+	a.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+}
+
 // update sends the client one of a session's updates. It fails only when
 // the client is gone, and then nothing more can be sent.
 func (a *agent) update(sid string, u acp.SessionUpdate) {
@@ -218,19 +263,20 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	case o := <-t.done:
 		return o.resp, o.err
 	case <-ctx.Done():
-		// The client withdrew the prompt: a cancel, as it would be in
-		// claude's terminal. When the client went instead, closing the
-		// session interrupts the turn, once (serve).
+		// The client withdrew the prompt ($/cancel_request): it alone
+		// stops, not the prompts queued after it. When the client went
+		// instead, closing the session interrupts the turn, once (serve).
 		if a.client.Err() == nil {
-			s.cancel()
+			s.withdrawTurn(t)
 		}
 		return nil, ctx.Err()
 	}
 }
 
-func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
+func (a *agent) Cancel(ctx context.Context, n *acp.CancelNotification) error {
 	if s, err := a.session(n.SessionID); err == nil {
-		s.cancel()
+		seq, _ := acp.SequenceFromContext(ctx)
+		s.cancel(seq)
 	} else if s := a.child(string(n.SessionID)); s != nil {
 		s.stopSubagent(string(n.SessionID)) // a subagent's session: that subagent alone
 	}
@@ -254,5 +300,5 @@ func (a *agent) ExtMethod(ctx context.Context, method string, params json.RawMes
 	if method == GenerateTitleMethod {
 		return a.generateTitle(ctx, params)
 	}
-	return nil, &acp.Error{Code: acp.ErrorCodeMethodNotFound, Message: "Method not found: " + method}
+	return a.UnimplementedAgent.ExtMethod(ctx, method, params)
 }

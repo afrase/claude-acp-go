@@ -48,12 +48,19 @@ func (c *config) exitPlanOptions() []acp.PermissionOption {
 	)
 }
 
-// exitPlan is the user's answer to ExitPlanMode: claude leaves plan mode
-// for the mode picked, and the client is told; keeping on planning
-// stops the turn, which ends cancelled.
-func (s *session) exitPlan(option string) claudeagent.PermissionResult {
-	offered := slices.ContainsFunc(s.cfg.exitPlanOptions(), func(o acp.PermissionOption) bool { return string(o.OptionID) == option })
-	if mode, ok := planModes[option]; ok && offered {
+// exitPlan is the user's answer to ExitPlanMode, picked among offered:
+// claude leaves plan mode for the mode picked, and the client is told;
+// keeping on planning stops the turn, which ends cancelled. Auto mode
+// picked on a model that has lost it since (the model changed while the
+// user read the plan) starts the work accepting edits, the nearest mode
+// it has: the plan was approved.
+func (s *session) exitPlan(option string, offered []acp.PermissionOption) claudeagent.PermissionResult {
+	shown := slices.ContainsFunc(offered, func(o acp.PermissionOption) bool { return string(o.OptionID) == option })
+	if option == optPlanAuto && shown && !slices.ContainsFunc(s.cfg.exitPlanOptions(), func(o acp.PermissionOption) bool { return o.OptionID == optPlanAuto }) {
+		s.log.Info("Auto mode is gone with the model: the plan's work starts accepting edits")
+		option = optPlanEdits
+	}
+	if mode, ok := planModes[option]; ok && shown {
 		s.cfg.modeChanged(mode)
 		return claudeagent.Allow{Classification: claudeagent.UserTemporary,
 			UpdatedPermissions: []claudeagent.PermissionUpdate{{Type: claudeagent.UpdateSetMode, Mode: mode, Destination: claudeagent.DestinationSession}}}

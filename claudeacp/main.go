@@ -2,7 +2,6 @@ package claudeacp
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"os"
 	ossignal "os/signal" // signal is a test helper's name
@@ -19,29 +18,33 @@ import (
 // it, even one the agent had no time to close. SIGTERM and SIGINT end the
 // agent as the end of stdin does: each session is closed, and its claude
 // exits; a second one kills the agent at once.
-func Main() {
+//
+// Main returns nil when the client went or a signal ended the agent, and
+// otherwise what broke the connection (already logged), so that a
+// command can exit with an error.
+func Main() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg := Config{CLIPath: os.Getenv("CLAUDE_CODE_EXECUTABLE"), Log: log, SharedGroup: true}
-	if err := Serve(context.Background(), untilSignal(os.Stdin, log), os.Stdout, cfg); err != nil {
-		log.Error("serving the client", "err", err)
-	}
-}
-
-// untilSignal is r until it ends or the process gets SIGTERM or SIGINT,
-// which end it as EOF would.
-func untilSignal(r io.Reader, log *slog.Logger) io.Reader {
-	pr, pw := io.Pipe()
-	go func() {
-		_, err := io.Copy(pw, r)
-		_ = pw.CloseWithError(err)
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	sigs := make(chan os.Signal, 1)
 	ossignal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+	defer ossignal.Stop(sigs)
 	go func() {
-		sig := <-sigs
-		ossignal.Stop(sigs) // the next one has its default effect
-		log.Info("closing the sessions on a signal", "signal", sig)
-		_ = pw.Close()
+		select {
+		case sig := <-sigs:
+			ossignal.Stop(sigs) // the next one has its default effect
+			log.Info("closing the sessions on a signal", "signal", sig)
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
-	return pr
+	err := Serve(ctx, os.Stdin, os.Stdout, cfg)
+	if ctx.Err() != nil {
+		return nil // a signal: the end the agent was asked for
+	}
+	if err != nil {
+		log.Error("serving the client", "err", err)
+	}
+	return err
 }

@@ -164,7 +164,7 @@ func (c *config) setFlag(ctx context.Context, id, value string) error {
 		flags = map[string]any{"agent": orNull(value)}
 	}
 	if err := c.claude.ApplyFlagSettings(ctx, flags); err != nil {
-		return refused("the "+id, err)
+		return refused(flagNames[id], err)
 	}
 	c.mu.Lock()
 	switch id {
@@ -178,6 +178,9 @@ func (c *config) setFlag(ctx context.Context, id, value string) error {
 	c.mu.Unlock()
 	return nil
 }
+
+// flagNames are the flag options as a refused change names them.
+var flagNames = map[string]string{optEffort: "the effort", optFast: "fast mode", optAgent: "the agent"}
 
 // effortSettings are the flag settings for an effort level. They carry
 // ultracode when the session's settings turned it on: since claude

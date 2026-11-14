@@ -112,3 +112,39 @@ func TestEnterPlanMode(t *testing.T) {
 		t.Errorf("modes %q", got)
 	}
 }
+
+// ExitPlanMode's answer is checked against the options the user was
+// shown: Auto mode picked on a model that lost it while the user read
+// the plan starts the work accepting edits, rather than cancel it.
+func TestExitPlanModeModelChanged(t *testing.T) {
+	plan := `{"plan":"Do x"}`
+	init := `{"current_permission_mode":"plan","models":[{"value":"default","displayName":"Default","supportsAutoMode":true},` +
+		`{"value":"plain","displayName":"Plain"}]}`
+	f := started(init, `null`, user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_1","name":"ExitPlanMode","input":`+plan+`}`),
+		canUseTool("toolu_1", "ExitPlanMode", plan, ""),
+		answers("toolu_1", `{"behavior":"allow","updatedPermissions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}`),
+		toolDone, result(names("id2")), claudetest.Send(idle))
+	f.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`,
+		`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)
+	p := start(t, nil, f)
+	sid := p.open(t)
+	var options string
+	p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+		options = optionIDs(req)
+		if _, err := p.SetSessionConfigOption(ctx, &acp.SetSessionConfigOptionRequest{SessionID: sid, ConfigID: "model",
+			ValueID: &acp.SetSessionConfigOptionRequestValueID{Value: "plain"}}); err != nil {
+			t.Error(err)
+		}
+		return pick(optPlanAuto)(ctx, req)
+	}
+	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+		t.Errorf("stop %s", got)
+	}
+	if !strings.HasPrefix(options, optPlanAuto) {
+		t.Errorf("options %q", options)
+	}
+	if got := p.modeUpdates(); !slices.Equal(got, []string{"acceptEdits"}) {
+		t.Errorf("modes %q", got)
+	}
+}

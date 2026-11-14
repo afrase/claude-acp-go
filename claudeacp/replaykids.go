@@ -359,7 +359,7 @@ func (r *replayer) ends() {
 		case !kid.background && kid.launched == "failed":
 			st, _ = endState("failed", kid.failure)
 		default:
-			st = acp.StateUpdate{Other: json.RawMessage(`{"state":"idle"}`)}
+			st = acp.StateUpdate{Idle: &acp.IdleStateUpdate{None: true}}
 		}
 		ends = append(ends, replayEnd{kid.sa, st, false})
 	}
@@ -379,7 +379,7 @@ func (k *subagents) replayed(id, call, stream string, in launch) (sa *subagent, 
 		if !sa.shown { // it ran here unseen: what is known of it
 			st = acp.StateUpdate{Running: &acp.RunningStateUpdate{}}
 			if sa.ended {
-				st = acp.StateUpdate{Other: json.RawMessage(`{"state":"idle"}`)}
+				st = acp.StateUpdate{Idle: &acp.IdleStateUpdate{None: true}}
 			}
 		}
 		live = &st

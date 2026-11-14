@@ -99,7 +99,7 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 	case "Edit":
 		v := view{title: titled("Edit", rel(file, cwd)), kind: acp.ToolKindEdit, locations: at(file, nil)}
 		if file != "" {
-			v.content = []acp.ToolCallContent{{Diff: &acp.Diff{Path: file, OldText: in.OldString, NewText: in.NewString}}}
+			v.content = []acp.ToolCallContent{{Diff: &acp.Diff{Path: file, OldText: oldText(in.OldString), NewText: in.NewString}}}
 		}
 		return v
 	case "Glob":
@@ -121,7 +121,7 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 	case "Agent", "Task":
 		return view{title: cmp.Or(in.Description, name), kind: acp.ToolKindThink, content: texts(in.Prompt)}
 	case "ExitPlanMode":
-		return view{title: "Plan ready", kind: acp.ToolKindSwitchMode, content: texts(in.Plan)}
+		return view{title: "Approve Plan", kind: acp.ToolKindSwitchMode, content: texts(in.Plan)}
 	case "AskUserQuestion":
 		v := view{title: "Asking for your input", kind: acp.ToolKindOther}
 		for _, q := range in.Questions {
@@ -132,7 +132,11 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 		}
 		return v
 	case "Skill":
-		return view{title: titled("Skill", in.Skill), kind: acp.ToolKindOther}
+		title := "Load skill"
+		if in.Skill != "" {
+			title += ": " + in.Skill
+		}
+		return view{title: title, kind: acp.ToolKindOther}
 	case "ReportFindings":
 		v := view{title: "Report findings: none found", kind: acp.ToolKindThink}
 		if n := len(in.Findings); n > 0 {

@@ -91,6 +91,10 @@ type Subagent struct {
 	Background bool
 	// StoppedByUser says the user stopped it.
 	StoppedByUser bool
+	// Name, AgentType and Description are what the call that started it
+	// named it, its type (role) and what it was to do, as claude keeps
+	// them; empty when it didn't.
+	Name, AgentType, Description string
 
 	path string
 }
@@ -160,6 +164,9 @@ func withMeta(a Subagent) Subagent {
 		WorktreePath  str `json:"worktreePath"`
 		RequestShape  str `json:"requestShape"`
 		StoppedByUser any `json:"stoppedByUser"` // true alone counts, as the SDK has it
+		Name          str `json:"name"`
+		AgentType     str `json:"agentType"`
+		Description   str `json:"description"`
 	}
 	if json.Unmarshal(data, &meta) != nil {
 		return a
@@ -167,6 +174,7 @@ func withMeta(a Subagent) Subagent {
 	a.ParentToolUseID, a.ParentAgentID, a.WorktreePath = string(meta.ToolUseID), string(meta.ParentAgentID), string(meta.WorktreePath)
 	stopped, _ := meta.StoppedByUser.(bool)
 	a.Background, a.StoppedByUser = meta.RequestShape == "background", stopped
+	a.Name, a.AgentType, a.Description = string(meta.Name), string(meta.AgentType), string(meta.Description)
 	return a
 }
 

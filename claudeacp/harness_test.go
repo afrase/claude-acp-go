@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -175,10 +176,16 @@ func start(t *testing.T, caps *acp.ClientCapabilities, fakes ...*claudetest.Fake
 		close(done)
 	}()
 	p := &peer{client: &client{}, agent: a, clock: clk}
-	p.AgentConn = acp.NewAgentConn(fromAgentR, toAgentW, func(*acp.AgentConn) acp.Client { return p.client })
+	// The client's side logs what it can't take, a message missing what the
+	// schema requires among them: the agent must send none.
+	warned := &warnings{}
+	p.AgentConn = acp.NewAgentConn(fromAgentR, toAgentW, func(*acp.AgentConn) acp.Client { return p.client }, acp.WithLogger(slog.New(warned)))
 	t.Cleanup(func() {
 		_ = toAgentW.Close()
 		<-done
+		for _, w := range warned.all() {
+			t.Errorf("the client's connection: %s", w)
+		}
 		// Only the claudes the agent started: a test that failed before
 		// starting one mustn't wait for it.
 		for _, f := range fakes[:min(int(spawned.Load()), len(fakes))] {
@@ -189,6 +196,32 @@ func start(t *testing.T, caps *acp.ClientCapabilities, fakes ...*claudetest.Fake
 		t.Fatal(err)
 	}
 	return p
+}
+
+// warnings is a log handler that keeps what is logged at WARN and above.
+type warnings struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (w *warnings) Enabled(_ context.Context, l slog.Level) bool { return l >= slog.LevelWarn }
+
+func (w *warnings) Handle(_ context.Context, r slog.Record) error {
+	line := r.Message
+	r.Attrs(func(a slog.Attr) bool { line += " " + a.String(); return true })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lines = append(w.lines, line)
+	return nil
+}
+
+func (w *warnings) WithAttrs([]slog.Attr) slog.Handler { return w }
+func (w *warnings) WithGroup(string) slog.Handler      { return w }
+
+func (w *warnings) all() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.lines)
 }
 
 // open opens a session in a temp folder.

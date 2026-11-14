@@ -60,26 +60,26 @@ type config struct {
 var builtinAgents = []string{"claude", "general-purpose", "Explore", "Plan", "statusline-setup", defaultValue}
 
 // init sets c as claude starts the session: as its answer to initialize
-// (ir) says, else as the session asked (o), else claude's defaults.
-func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, booleans bool) {
-	var set struct {
-		Ultracode   bool   `json:"ultracode"`
-		EffortLevel string `json:"effortLevel"`
-		FastMode    bool   `json:"fastMode"`
-		Agent       string `json:"agent"`
-	}
-	if strings.HasPrefix(o.Settings, "{") { // else a settings file's path, which claude reads
-		_ = json.Unmarshal([]byte(o.Settings), &set)
-	}
+// (ir) says, else as the session asked (o), else claude's defaults. A
+// resumed session's model, which initialize doesn't say, is the one its
+// history last ran on (resumed), as claude resumes it on that.
+func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, resumed string, booleans bool) {
+	set := readSettings(claudeConfigDir(o.Env), o.Cwd, o.Settings)
 	if ir == nil {
 		ir = &claudeagent.InitResponse{}
 	}
 	c.mode = cmp.Or(ir.CurrentPermissionMode, o.PermissionMode, claudeagent.PermissionDefault)
 	c.bypass, c.models, c.booleans = o.AllowBypass, ir.Models, booleans
-	c.effort, c.agent = cmp.Or(set.EffortLevel, defaultValue), cmp.Or(set.Agent, defaultValue)
+	c.agent = cmp.Or(set.Agent, defaultValue)
 	c.fast = ir.FastModeState == "on" || ir.FastModeState == "" && set.FastMode
 	c.ultracode = set.Ultracode
-	c.model = c.resolve(cmp.Or(ir.CurrentModel, o.Model), "")
+	c.model = c.resolve(cmp.Or(ir.CurrentModel, o.Model, resumed), "")
+	if m := c.modelInfo(); m != nil {
+		c.effort = set.effortFor(m.ResolvedModel, m.Value)
+	} else {
+		c.effort = set.effortFor(c.model)
+	}
+	c.effort = cmp.Or(c.effort, defaultValue)
 	for _, a := range ir.Agents {
 		if !slices.Contains(builtinAgents, a.Name) {
 			c.agents = append(c.agents, a)
@@ -88,6 +88,13 @@ func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, boole
 	if m := c.modelInfo(); m != nil && c.effort != defaultValue && !slices.Contains(m.SupportedEffortLevels, c.effort) {
 		c.effort = defaultValue
 	}
+}
+
+// currentMode is the session's permission mode now.
+func (c *config) currentMode() claudeagent.PermissionMode {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mode
 }
 
 // resolve is the model option's value for id, a value or a model's id

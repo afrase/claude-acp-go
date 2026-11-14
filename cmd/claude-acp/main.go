@@ -11,7 +11,8 @@
 // claude writes on its stderr is passed on as claude wrote it (each line
 // cut at 1 KiB, a few a second): claude's errors, or its debug output
 // when the environment turns that on, may quote a prompt. SIGTERM and
-// SIGINT close every session, as the end of stdin does.
+// SIGINT close every session, as the end of stdin does. It exits with 1
+// when the connection to the client broke.
 package main
 
 import (
@@ -32,5 +33,7 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	claudeacp.Main()
+	if claudeacp.Main() != nil {
+		os.Exit(1) // Main logged why
+	}
 }

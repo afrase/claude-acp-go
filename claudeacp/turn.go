@@ -27,11 +27,12 @@ type turn struct {
 	sawResult bool // a result came since it became active
 	cancelled bool // the client cancelled it while active
 	held      *outcome
-	textSent  bool // text reached the client during it
+	textSent  bool     // text reached the client during it
+	notices   []string // what the notices sent during it said (noticeText)
 	usage     claudeagent.Usage
+	models    spend // what its results added by model
 
 	done    chan outcome // its answer, once
-	ended   chan struct{}
 	settled bool
 }
 
@@ -42,7 +43,7 @@ type outcome struct {
 }
 
 func newTurn(id string) *turn {
-	return &turn{id: id, ids: map[string]bool{id: true}, steers: map[string]bool{}, done: make(chan outcome, 1), ended: make(chan struct{})}
+	return &turn{id: id, ids: map[string]bool{id: true}, steers: map[string]bool{}, done: make(chan outcome, 1)}
 }
 
 func (t *turn) ownsAny(ids []string) bool {
@@ -56,7 +57,7 @@ func (t *turn) answer(r acp.StopReason) outcome {
 		InputTokens: uint64(u.InputTokens), OutputTokens: uint64(u.OutputTokens), //nolint:gosec // token counts
 		CachedReadTokens: &read, CachedWriteTokens: &write,
 		TotalTokens: uint64(u.InputTokens+u.OutputTokens) + read + write, //nolint:gosec // token counts
-	}}}
+	}, Meta: quotaMeta(u, t.models)}}
 }
 
 func cancelled(t *turn) outcome { return t.answer(acp.StopReasonCancelled) }
@@ -68,7 +69,6 @@ func (s *session) settleLocked(t *turn, o outcome) {
 	}
 	t.settled = true
 	t.done <- o
-	close(t.ended)
 	s.turns = slices.DeleteFunc(s.turns, func(x *turn) bool { return x == t })
 	if s.active == t {
 		s.active = nil
@@ -170,6 +170,7 @@ type ending struct {
 	errorKind  string // the API error its last top-level message named
 	incomplete bool   // a tool it ran gave no result
 	login      bool   // claude isn't signed in
+	spent      spend  // what the result added by model
 }
 
 // resultLocked ends the turn r ends, with r's stop reason; the prompts
@@ -188,6 +189,7 @@ func (s *session) resultLocked(r *claudeagent.Result, end ending) {
 		s.activateLocked(t)
 	}
 	t.usage = addUsage(t.usage, r.Usage)
+	t.models = t.models.add(end.spent)
 	t.sawResult = true
 	for _, id := range ids {
 		delete(t.steers, id)
@@ -200,14 +202,16 @@ func (s *session) resultLocked(r *claudeagent.Result, end ending) {
 		o = outcome{err: &acp.Error{Code: acp.ErrorCodeInternalError,
 			Message: "Claude ended the turn without a tool's result.", Data: []byte(`{"errorKind":"incomplete_tool_call"}`)}}
 	}
-	if len(t.steers) > 0 && !t.cancelled {
-		t.held = &o
-		return
-	}
+	// The prompts claude folded into t end now, though t may wait for a
+	// steer: no later result names them.
 	for _, n := range named {
 		if n != t {
 			s.settleLocked(n, n.answer(acp.StopReasonEndTurn))
 		}
+	}
+	if len(t.steers) > 0 && !t.cancelled {
+		t.held = &o
+		return
 	}
 	s.settleLocked(t, o)
 	s.owedIdle++

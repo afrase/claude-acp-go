@@ -1,6 +1,7 @@
 package claudeacp
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,37 @@ func (t *titles) heard(stream, text string) {
 	t.text += text + "\n"
 	if n := len(t.text); n > titleText {
 		t.text = strings.ToValidUTF8(t.text[n-titleText:], "")
+	}
+}
+
+// heardBefore adds the words of a reopened session's history ms, so a
+// title claude makes for it is of the conversation, not of the turn
+// after the load alone. Tags (a command's, a reminder's) aren't words.
+func (t *titles) heardBefore(ms []sessions.Message) {
+	for _, m := range ms {
+		var msg struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if m.ParentToolUseID != "" || json.Unmarshal(m.Message, &msg) != nil {
+			continue
+		}
+		var text string
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(msg.Content, &text) != nil && json.Unmarshal(msg.Content, &blocks) == nil {
+			var parts []string
+			for _, b := range blocks {
+				if b.Type == "text" {
+					parts = append(parts, b.Text)
+				}
+			}
+			text = strings.Join(parts, "\n")
+		}
+		if text = strings.TrimSpace(text); !strings.HasPrefix(text, "<") {
+			t.heard("", text)
+		}
 	}
 }
 

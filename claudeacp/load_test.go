@@ -258,3 +258,68 @@ func TestResume(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// A resumed session's model is the one its history last ran on, which
+// claude resumes it on and its answer to initialize doesn't say; not one
+// of claude's own messages' ("<synthetic>").
+func TestResumedModel(t *testing.T) {
+	init := strings.Replace(initAnswer, `"current_model":"claude-opus-5-5",`, "", 1)
+	for _, load := range []bool{false, true} {
+		p := start(t, nil, started(init, `null`))
+		cwd, sid := t.TempDir(), nthUUID(1)
+		synth := asstRec("a2", "msg_2", textBlock("API Error: 500"))
+		synth["message"].(map[string]any)["model"] = "<synthetic>"
+		p.writeHistory(t, cwd, sid, userRec("u1", "hello"), asstRec("a1", "msg_1", textBlock("hi")), synth)
+		var opts []acp.SessionConfigOption
+		if load {
+			r, err := p.LoadSession(context.Background(), &acp.LoadSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd, MCPServers: []acp.MCPServer{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts = r.ConfigOptions
+		} else {
+			r, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts = r.ConfigOptions
+		}
+		if got := summary(opts); !strings.Contains(got, "model/model=sonnet[") {
+			t.Errorf("load %v: %s", load, got)
+		}
+	}
+}
+
+// A resume of an open session set up otherwise (another folder here)
+// starts claude again so, in the mode the session was in; one set up the
+// same is answered as it is.
+func TestResumeMoved(t *testing.T) {
+	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
+	f1, f2 := fake(), fake()
+	f1.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, ok)
+	p := start(t, nil, f1, f2)
+	cwd, moved, sid := t.TempDir(), t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "hello"), asstRec("a1", "msg_1", textBlock("hi")))
+	resume := func(dir string) {
+		t.Helper()
+		if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: dir}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resume(cwd)
+	resume(cwd) // the same: nothing starts
+	if _, err := p.SetSessionMode(context.Background(), &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "plan"}); err != nil {
+		t.Fatal(err)
+	}
+	resume(moved)
+	select {
+	case <-f1.Exited():
+	default:
+		t.Error("the first claude runs on")
+	}
+	spec := f2.Spec()
+	args := strings.Join(spec.Args, " ")
+	if spec.Dir != moved || !strings.Contains(args, "--resume="+sid) || !strings.Contains(args, "--permission-mode=plan") {
+		t.Errorf("claude started in %s with %s", spec.Dir, args)
+	}
+}

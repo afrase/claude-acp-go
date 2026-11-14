@@ -24,6 +24,35 @@ type setup struct {
 	meta         map[string]any
 }
 
+// fingerprint is what of su claude runs a session by: its folders, MCP
+// servers, system prompt and the _meta that sets claude up. A load or
+// resume of an open session that changes it starts claude again, as
+// claude-agent-acp does (its computeSessionFingerprint).
+func (su setup) fingerprint() string {
+	dirs := slices.Sorted(slices.Values(su.dirs))
+	servers := make([]string, 0, len(su.mcpServers))
+	for _, srv := range su.mcpServers {
+		b, err := json.Marshal(srv)
+		if err != nil { // can't be told apart: say it changed
+			b = []byte(err.Error())
+		}
+		servers = append(servers, string(b))
+	}
+	slices.Sort(servers)
+	b, err := json.Marshal(struct {
+		Cwd             string
+		Dirs, Servers   []string
+		SystemPrompt    *acp.SystemPrompt
+		ClaudeCode      any
+		MetaPrompt      any
+		AdditionalRoots any
+	}{su.cwd, dirs, servers, su.systemPrompt, su.meta["claudeCode"], su.meta["systemPrompt"], su.meta["additionalRoots"]})
+	if err != nil {
+		return err.Error() // never equal to a whole one's
+	}
+	return string(b)
+}
+
 // sessionOptions are the keys of _meta.claudeCode.options the agent
 // applies, claude-agent-acp's host options: the Agent SDK's options of
 // the same names. Others are logged and ignored.

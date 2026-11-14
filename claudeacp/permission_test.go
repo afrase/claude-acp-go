@@ -188,13 +188,23 @@ func TestPermissionWithdrawn(t *testing.T) {
 }
 
 // What the work a cancel stopped still asks, a question too, is denied
-// at once: the client isn't asked.
+// at once: the client isn't asked. So is what it asked as the cancel
+// came, before the request was put to the user.
 func TestStoppedWorkAsks(t *testing.T) {
-	for _, tc := range []struct{ tool, input string }{
-		{"Bash", `{"command":"ls"}`},
-		{"AskUserQuestion", `{"questions":[{"question":"Which?","options":[{"label":"A"}]}]}`},
+	for _, tc := range []struct {
+		tool, input string
+		during      bool // the cancel comes as the request is being asked
+	}{
+		{"Bash", `{"command":"ls"}`, false},
+		{"AskUserQuestion", `{"questions":[{"question":"Which?","options":[{"label":"A"}]}]}`, false},
+		{"Bash", `{"command":"ls"}`, true},
+		{"AskUserQuestion", `{"questions":[{"question":"Which?","options":[{"label":"A"}]}]}`, true},
 	} {
-		t.Run(tc.tool, func(t *testing.T) {
+		name := tc.tool
+		if tc.during {
+			name += " during"
+		}
+		t.Run(name, func(t *testing.T) {
 			taken, release := make(chan struct{}), make(chan struct{})
 			f := fake(user("id2"), echo("id2"), signal(taken), claudetest.Until(release),
 				canUseTool("toolu_1", tc.tool, tc.input, ""),
@@ -210,10 +220,23 @@ func TestStoppedWorkAsks(t *testing.T) {
 				asked.Store(true)
 				return &acp.CreateElicitationResponse{Decline: true}, nil
 			}
+			asking, cancelled := make(chan struct{}), make(chan struct{})
+			if tc.during {
+				p.agent.pause = func(at string) {
+					if at == "ask" {
+						close(asking)
+						<-cancelled
+					}
+				}
+			}
 			sid := p.open(t)
 			w := p.prompt(t, sid, "go")
 			wait(t, taken, "the prompt taken")
 			eventually(t, "the prompt running", func() bool { _, a := p.queue(t, sid); return a == "id2" })
+			if tc.during {
+				close(release)
+				wait(t, asking, "the request being asked")
+			}
 			if err := p.Cancel(t.Context(), &acp.CancelNotification{SessionID: sid}); err != nil {
 				t.Fatal(err)
 			}
@@ -223,7 +246,11 @@ func TestStoppedWorkAsks(t *testing.T) {
 				defer s.mu.Unlock()
 				return s.dropTop
 			})
-			close(release)
+			if tc.during {
+				close(cancelled)
+			} else {
+				close(release)
+			}
 			if got := stopReason(w); got != "cancelled" {
 				t.Error(got)
 			}
