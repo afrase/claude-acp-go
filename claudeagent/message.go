@@ -58,8 +58,15 @@ var decoders = map[string]func() Message{
 
 // Decode decodes one stdout line. It fails only when the line isn't a JSON
 // object with a string type; a message the package doesn't model, or
-// whose fields don't decode as modelled, is an *Unknown.
+// whose fields don't decode as modelled, is an *Unknown. The message's
+// Raw is a copy: line may be reused.
 func Decode(line []byte) (Message, error) {
+	return decode(bytes.Clone(bytes.TrimSpace(line)))
+}
+
+// decode is Decode keeping line as Raw, for a line no one reuses: the
+// transport's, which can run to many MiB.
+func decode(line []byte) (Message, error) {
 	line = bytes.TrimSpace(line)
 	var e Envelope
 	if err := json.Unmarshal(line, &e); err != nil {

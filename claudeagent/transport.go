@@ -140,7 +140,7 @@ func (t *transport) message(line []byte, over int) Message {
 		t.log.Debug("claude wrote a line that isn't a message", "size", len(line))
 		return nil
 	}
-	m, err := Decode(line)
+	m, err := decode(line) // a fresh slice per line: Raw keeps it
 	if err != nil {
 		t.log.Warn("claude wrote a message that doesn't decode", "size", len(line), "err", err)
 		return nil
