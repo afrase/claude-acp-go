@@ -132,6 +132,19 @@ func TestStartWithoutAccount(t *testing.T) {
 	}
 }
 
+// claude's version is logged from its answer to initialize: no second
+// claude runs to ask it.
+func TestStartLogsVersion(t *testing.T) {
+	var log syncBuffer
+	s, f := startWith(t, claudeagent.Options{Log: slog.New(slog.NewTextHandler(&log, nil))},
+		`{"claude_code_version":"2.1.400","account":{"subscriptionType":"max"}}`)
+	got := log.String()
+	finish(t, s, f)
+	if !strings.Contains(got, `level=INFO msg=claude version=2.1.400`) {
+		t.Errorf("no version logged:\n%s", got)
+	}
+}
+
 // syncBuffer is a log the session's goroutines write and a test reads.
 type syncBuffer struct {
 	mu sync.Mutex

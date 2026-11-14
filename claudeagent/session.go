@@ -85,6 +85,9 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	}
 	s.initResp = r
 	s.addCapabilities(r.Capabilities)
+	// For the log only: features are detected from what claude says it
+	// supports, never from its version.
+	s.log.Info("claude", "version", r.ClaudeCodeVersion)
 	if r.Account == (Account{}) {
 		// claude names the login it runs with; none may mean a claude that
 		// starts bare by default, without the user's login, settings,
