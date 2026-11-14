@@ -41,6 +41,11 @@ type tools struct {
 	byID      map[string]*tool
 	streaming map[string]map[int]*tool // by stream (the parent's id; "" at the top) and block index
 	compact   *tool                    // a compaction running
+	// compactUpdates says compactions go as ACP's compaction updates (the
+	// client declared them), not as a call; summary is the next one's,
+	// from claude's PostCompact hook.
+	compactUpdates bool
+	summary        string
 	// compactShown says the turn showed a compaction, whose result's text
 	// isn't shown again; failure is why one failed, which claude says
 	// again as a command's output.

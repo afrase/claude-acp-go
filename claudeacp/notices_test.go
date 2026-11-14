@@ -196,3 +196,57 @@ func TestCompactionFailedOnce(t *testing.T) {
 		t.Errorf("%s", strings.Join(got, "\n"))
 	}
 }
+
+// A client that declares ACP's compaction updates gets them, not a call:
+// a completed compaction with the summary claude's hook gave, a failed
+// one with why, and one still running at the turn's end cancelled.
+func TestCompactionUpdates(t *testing.T) {
+	f := fake(user("id2"),
+		sendf(`{"type":"system","subtype":"status","status":"compacting","uuid":"c1"}`),
+		sendf(`{"type":"control_request","request_id":"h1","request":{"subtype":"hook_callback","callback_id":"hook_0","input":{"hook_event_name":"PostCompact","trigger":"manual",`+
+			`"compact_summary":"<analysis>\nThinking.\n</analysis>\n\n<summary>\nWe built X.\n</summary>"}}}`),
+		claudetest.Expect(`{"type":"control_response","response":{"subtype":"success","request_id":"h1"}}`),
+		sendf(`{"type":"system","subtype":"status","status":null,"compact_result":"success"}`),
+		sendf(`{"type":"system","subtype":"compact_boundary","uuid":"b1","compact_metadata":{"trigger":"manual","pre_tokens":900,"post_tokens":80}}`),
+		sendf(`{"type":"system","subtype":"status","status":"compacting","uuid":"c2"}`),
+		sendf(`{"type":"system","subtype":"status","status":null,"compact_result":"failed","compact_error":"too short"}`),
+		sendf(`{"type":"system","subtype":"status","status":"compacting","uuid":"c3"}`),
+		result(""), claudetest.Send(idle))
+	p := start(t, &acp.ClientCapabilities{Session: &acp.ClientSessionCapabilities{Compaction: &acp.CompactionCapabilities{}}}, f)
+	if got := stopReason(p.prompt(t, p.open(t), "/compact")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	var got []string
+	for _, u := range p.of("compaction_update") {
+		b, _ := json.Marshal(u.CompactionUpdate)
+		got = append(got, string(b))
+	}
+	want := []string{
+		`{"compactionId":"c1","status":"in_progress"}`,
+		`{"compactionId":"c1","status":"completed","summary":[{"type":"text","text":"We built X."}]}`,
+		`{"compactionId":"c2","status":"in_progress"}`,
+		`{"compactionId":"c2","status":"failed","error":"too short"}`,
+		`{"compactionId":"c3","status":"in_progress"}`,
+		`{"compactionId":"c3","status":"cancelled"}`,
+	}
+	if !slices.Equal(got, want) || len(p.toolUpdates()) != 0 {
+		t.Errorf("got\n%s\nwant\n%s\n%q", strings.Join(got, "\n"), strings.Join(want, "\n"), p.toolUpdates())
+	}
+}
+
+// claude's compaction output is shown as its summary only: without the
+// model's analysis, or claude's framing of it for the model.
+func TestCompactionSummary(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"<analysis>\nI think.\n</analysis>\n<summary>\nDone A.\n</summary>", "Done A."},
+		{"<analysis>Mentions <summary> here.</analysis>\n<summary>\nDone B.\n</summary>", "Done B."},
+		{"Lead <summary>Done C, quoting </summary> inline.</summary> after", "Done C, quoting </summary> inline."},
+		{"This session is being continued from a previous conversation that ran out of context.\n\nSummary:\nDone D.\n\nIf you need specific details from before compaction, read the transcript.", "Done D."},
+		{"This session is being continued from a previous conversation. Go on.", ""},
+		{"Just a summary.", "Just a summary."},
+	} {
+		if got := compactionSummary(tc.in); got != tc.want {
+			t.Errorf("%q: %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

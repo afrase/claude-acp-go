@@ -288,9 +288,17 @@ func (ts *tools) end(why callEnd) (incomplete bool) {
 		}
 		ts.sendLocked(t, report{status: acp.ToolCallStatusFailed, content: texts(text)})
 	}
-	if c := ts.compact; c != nil && (c.ended || exited) {
+	// One still running at a turn's end is cancelled as an ACP compaction
+	// update, which must end; a call goes on, as claude-agent-acp leaves
+	// it.
+	if c := ts.compact; c != nil && (c.ended || exited || ts.compactUpdates) {
 		ts.compact = nil
-		if !c.ended {
+		switch {
+		case c.ended:
+		case ts.compactUpdates:
+			c.ended = true
+			ts.compactionLocked(c, acp.CompactionStatusCancelled, "")
+		default:
 			c.ended = true
 			ts.sendLocked(c, report{status: acp.ToolCallStatusFailed, content: texts(exitedText)})
 		}

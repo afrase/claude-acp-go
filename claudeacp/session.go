@@ -94,11 +94,15 @@ func (a *agent) start(ctx context.Context, id string, o claudeagent.Options) (*s
 	s.st.init()
 	s.kids.init(id, a.clientCaps().subagents, a.update)
 	s.tools.init(o.Cwd, &s.kids, a.newID)
+	s.tools.compactUpdates = a.clientCaps().compaction
 	s.plan.init(s.update)
 	s.cmds.send = s.update
 	o.Hooks = map[claudeagent.HookEvent][]claudeagent.HookMatcher{
 		claudeagent.HookPostToolUse:     {{Fn: s.postToolUse}},
 		claudeagent.HookPostModelSwitch: {{Fn: s.postModelSwitch}},
+	}
+	if s.tools.compactUpdates { // only ACP's compaction updates carry the summary
+		o.Hooks[claudeagent.HookPostCompact] = []claudeagent.HookMatcher{{Fn: s.postCompact}}
 	}
 	o.CanUseTool, o.OnElicitation = s.canUseTool, s.elicit
 	s.stderr = newStderrLog(s.log, time.Now)
