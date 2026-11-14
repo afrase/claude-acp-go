@@ -262,5 +262,5 @@ func (a *agent) ExtMethod(ctx context.Context, method string, params json.RawMes
 	if method == GenerateTitleMethod {
 		return a.generateTitle(ctx, params)
 	}
-	return nil, &acp.Error{Code: acp.ErrorCodeMethodNotFound, Message: "Method not found: " + method}
+	return a.UnimplementedAgent.ExtMethod(ctx, method, params)
 }

@@ -271,3 +271,14 @@ func TestBackgroundWaits(t *testing.T) {
 	bg.Go(func() { t.Error("a goroutine started after the wait") })
 	bg.wait()
 }
+
+// An extension method the agent doesn't know is answered as acp-go and
+// claude-agent-acp answer one: Method not found, naming it in data.
+func TestUnknownExtMethod(t *testing.T) {
+	p := start(t, nil)
+	err := p.Call(t.Context(), "_foo/bar", map[string]any{}, nil)
+	var e *acp.Error
+	if !errors.As(err, &e) || e.Code != acp.ErrorCodeMethodNotFound || e.Message != "Method not found" || string(e.Data) != `{"method":"_foo/bar"}` {
+		t.Errorf("%v (%+v)", err, e)
+	}
+}
