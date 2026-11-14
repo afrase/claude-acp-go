@@ -98,14 +98,20 @@ func (ts *tools) compacted(m *claudeagent.CompactBoundary) {
 		r.status = ""
 	}
 	t.ended = true
-	c := m.CompactMetadata
-	out, _ := json.Marshal(struct {
-		Trigger    string `json:"trigger"`
-		PreTokens  int    `json:"preTokens"`
-		PostTokens int    `json:"postTokens"`
-		DurationMS int64  `json:"durationMs"`
-	}{c.Trigger, c.PreTokens, c.PostTokens, c.DurationMS})
-	r.rawOutput = out
+	if c := m.CompactMetadata; c != nil {
+		// The facts as claude-agent-acp words them: a count claude didn't
+		// give is left out, not 0.
+		trigger := "manual"
+		if c.Trigger == "auto" {
+			trigger = "automatic"
+		}
+		r.rawOutput, _ = json.Marshal(struct {
+			Trigger    string `json:"trigger"`
+			PreTokens  *int   `json:"preTokens,omitempty"`
+			PostTokens *int   `json:"postTokens,omitempty"`
+			DurationMS *int64 `json:"durationMs,omitempty"`
+		}{trigger, c.PreTokens, c.PostTokens, c.DurationMS})
+	}
 	ts.sendLocked(t, r)
 }
 

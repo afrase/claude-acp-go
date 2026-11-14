@@ -107,7 +107,7 @@ func TestCompactionOutcomeFirst(t *testing.T) {
 	want := []string{
 		`tool_call {"toolCallId":"c1","title":"Compact conversation","name":"compact","kind":"think","status":"in_progress","_meta":{"claudeCode":{"toolName":"compact"}}}`,
 		`tool_call_update {"toolCallId":"c1","status":"completed","_meta":{"claudeCode":{"toolName":"compact"}}}`,
-		`tool_call_update {"toolCallId":"c1","rawOutput":{"trigger":"auto","preTokens":900,"postTokens":80,"durationMs":1200},"_meta":{"claudeCode":{"toolName":"compact"}}}`,
+		`tool_call_update {"toolCallId":"c1","rawOutput":{"trigger":"automatic","preTokens":900,"postTokens":80,"durationMs":1200},"_meta":{"claudeCode":{"toolName":"compact"}}}`,
 	}
 	if got := p.toolUpdates(); !slices.Equal(got, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -152,5 +152,25 @@ func TestRefusalAndSignIn(t *testing.T) {
 	}
 	if got := p.texts(); !slices.Equal(got, []string{"text::Not that."}) {
 		t.Errorf("%q", got)
+	}
+}
+
+// A compaction's facts are worded as claude-agent-acp words them: an
+// automatic one's trigger is "automatic", and a count claude didn't give
+// is left out; a boundary with no facts gives none.
+func TestCompactionFacts(t *testing.T) {
+	for _, tc := range []struct{ boundary, want string }{
+		{`{"type":"system","subtype":"compact_boundary","uuid":"b1","compact_metadata":{"trigger":"auto","pre_tokens":900}}`,
+			`tool_call_update {"toolCallId":"b1","status":"completed","rawOutput":{"trigger":"automatic","preTokens":900},"_meta":{"claudeCode":{"toolName":"compact"}}}`},
+		{`{"type":"system","subtype":"compact_boundary","uuid":"b1"}`,
+			`tool_call_update {"toolCallId":"b1","status":"completed","_meta":{"claudeCode":{"toolName":"compact"}}}`},
+	} {
+		p := start(t, nil, fake(user("id2"), sendf(tc.boundary), result(""), claudetest.Send(idle)))
+		if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+			t.Fatal(got)
+		}
+		if got := p.toolUpdates(); len(got) != 2 || got[1] != tc.want {
+			t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), tc.want)
+		}
 	}
 }

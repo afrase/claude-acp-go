@@ -87,8 +87,8 @@ func (s *session) handle(m claudeagent.Message) {
 		s.elicitationDone(m)
 	case *claudeagent.CompactBoundary:
 		s.tools.compacted(m)
-		if post := m.CompactMetadata.PostTokens; post > 0 {
-			s.st.used = post
+		if c := m.CompactMetadata; c != nil && c.PostTokens != nil && *c.PostTokens > 0 {
+			s.st.used = *c.PostTokens
 			s.usage(nil, nil)
 		}
 	case *claudeagent.TaskStarted:

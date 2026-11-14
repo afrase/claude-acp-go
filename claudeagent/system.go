@@ -61,12 +61,16 @@ type Status struct {
 // CompactBoundary marks where the conversation was compacted.
 type CompactBoundary struct {
 	Envelope
-	CompactMetadata struct {
-		Trigger    string `json:"trigger"` // "manual" or "auto"
-		PreTokens  int    `json:"pre_tokens"`
-		PostTokens int    `json:"post_tokens"`
-		DurationMS int64  `json:"duration_ms"`
-	} `json:"compact_metadata"`
+	CompactMetadata *CompactMetadata `json:"compact_metadata"` // nil when claude doesn't say
+}
+
+// CompactMetadata is a compaction's facts; a count claude doesn't give
+// is nil.
+type CompactMetadata struct {
+	Trigger    string `json:"trigger"` // "manual" or "auto"
+	PreTokens  *int   `json:"pre_tokens"`
+	PostTokens *int   `json:"post_tokens"`
+	DurationMS *int64 `json:"duration_ms"`
 }
 
 // SessionState is the session going "idle", "running" or

@@ -19,11 +19,7 @@ func TestDecodeSystem(t *testing.T) {
 		{`{"type":"system","subtype":"status","status":"compacting","compact_result":"success","uuid":"u17","session_id":"s1"}`, &Status{Status: "compacting", CompactResult: "success"}},
 		{
 			`{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":100,"post_tokens":10,"duration_ms":5},"uuid":"u18","session_id":"s1"}`,
-			func() Message {
-				m := &CompactBoundary{}
-				m.CompactMetadata.Trigger, m.CompactMetadata.PreTokens, m.CompactMetadata.PostTokens, m.CompactMetadata.DurationMS = "auto", 100, 10, 5
-				return m
-			}(),
+			&CompactBoundary{CompactMetadata: &CompactMetadata{Trigger: "auto", PreTokens: new(100), PostTokens: new(10), DurationMS: new(int64(5))}},
 		},
 		{`{"type":"system","subtype":"session_state_changed","state":"idle","uuid":"u19","session_id":"s1"}`, &SessionState{State: "idle"}},
 		{`{"type":"system","subtype":"session_state_changed","state":"running","sdk_host_only":true,"uuid":"u20","session_id":"s1"}`, &SessionState{State: "running", HostOnly: true}},
