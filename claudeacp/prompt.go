@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -13,7 +14,9 @@ import (
 
 // toClaude is a prompt's content as a claude user message's:
 //
-//   - text as it is (empty text is dropped: the API refuses it);
+//   - text as it is (empty text is dropped: the API refuses it), but for
+//     an MCP server's prompt as the client names it, /mcp:server:prompt,
+//     which is claude's /server:prompt (MCP);
 //   - a resource link as a Markdown link, [@name](uri), for a file;
 //   - an embedded text resource as the same link, and its text in a
 //     <context ref="uri"> block after everything else;
@@ -26,7 +29,7 @@ func toClaude(prompt []acp.ContentBlock) ([]claudeagent.Block, error) {
 		switch {
 		case b.Text != nil:
 			if b.Text.Text != "" {
-				out = append(out, text(b.Text.Text))
+				out = append(out, text(claudePrompt(b.Text.Text)))
 			}
 		case b.ResourceLink != nil:
 			out = append(out, text(link(b.ResourceLink.URI)))
@@ -46,6 +49,25 @@ func toClaude(prompt []acp.ContentBlock) ([]claudeagent.Block, error) {
 		return nil, invalidParams("the prompt has nothing claude takes")
 	}
 	return out, nil
+}
+
+// mcpPrompt is text that runs an MCP server's prompt by the name the
+// client has for it: /mcp:server:prompt, then what it is given.
+var mcpPrompt = regexp.MustCompile(`^/mcp:([^:\s]+):(\S+)(?:\s(.*))?$`)
+
+// claudePrompt is text that runs an MCP server's prompt by the client's
+// name for it as claude's (/server:prompt (MCP) args); other text as it
+// is.
+func claudePrompt(s string) string {
+	m := mcpPrompt.FindStringSubmatch(s)
+	if m == nil {
+		return s
+	}
+	s = "/" + m[1] + ":" + m[2] + mcpSuffix
+	if m[3] != "" {
+		s += " " + m[3]
+	}
+	return s
 }
 
 func text(s string) claudeagent.Block { return claudeagent.Block{Type: "text", Text: s} }

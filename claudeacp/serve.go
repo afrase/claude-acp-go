@@ -63,6 +63,7 @@ type clientCaps struct {
 	subagentText bool // subagents' text and thinking (_meta "subagent-transcript")
 	notices      bool // ACP's notices, for what claude says of its own
 	urls         bool // URL elicitation, which an MCP server's sign-in needs
+	compaction   bool // ACP's compaction updates, for a compaction
 	booleans     bool // boolean config options
 }
 
@@ -126,6 +127,7 @@ func (a *agent) Initialize(_ context.Context, req *acp.InitializeRequest) (*acp.
 		caps.forms = c.Elicitation != nil && c.Elicitation.Form != nil
 		caps.urls = c.Elicitation != nil && c.Elicitation.URL != nil
 		caps.notices = c.Session != nil && c.Session.Notices != nil
+		caps.compaction = c.Session != nil && c.Session.Compaction != nil
 		caps.booleans = c.Session != nil && c.Session.ConfigOptions != nil && c.Session.ConfigOptions.Boolean != nil
 		caps.subagents = c.Subagents != nil
 		caps.subagentText = readMeta[struct {

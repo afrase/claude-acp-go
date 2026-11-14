@@ -192,6 +192,7 @@ func (r *replayer) toolUse(stream string, b claudeagent.Block) {
 		r.s.plan.input(b)
 		return
 	}
+	r.s.plan.watch(stream, b)
 	t := &tool{id: b.ID, name: b.Name, parent: stream, whole: true}
 	r.calls[callKey{stream, b.ID}] = t
 	rep := wholeReport(t.name, b.Input, r.s.tools.cwd)
@@ -217,6 +218,6 @@ func (r *replayer) toolResult(stream string, b claudeagent.Block, structured jso
 		return
 	}
 	delete(r.calls, k)
-	r.s.tools.show(t, resultReport(t.name, b))
+	r.s.tools.show(t, resultReport(t.name, b, structured))
 	r.called(t, b, structured)
 }

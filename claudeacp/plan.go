@@ -18,7 +18,8 @@ import (
 // list, or (with its task tools, in a session with no terminal) with
 // TaskCreate, TaskUpdate and TaskList, whose results say what changed.
 // These calls of the main agent's aren't shown as tool calls: the plan
-// is what they do. A subagent's are, as its own steps.
+// is what they do. A subagent's are, as its own steps; its task tools'
+// change the session's tasks too, as the task list is the session's.
 
 // planTools are the tools whose calls are the plan.
 var planTools = []string{"TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
@@ -44,6 +45,7 @@ type plan struct {
 type planCall struct {
 	name  string
 	input json.RawMessage
+	shown bool // a subagent's, shown as a tool call too
 }
 
 // task is one of the task tools' tasks.
@@ -84,8 +86,21 @@ func (p *plan) input(b claudeagent.Block) {
 	p.sendLocked(entries)
 }
 
+// watch keeps a subagent's call of a task tool (in stream, its Agent
+// call's id), which is shown as a tool call, for its result to change the
+// session's tasks.
+func (p *plan) watch(stream string, b claudeagent.Block) {
+	if stream == "" || !slices.Contains([]string{"TaskCreate", "TaskUpdate", "TaskList"}, b.Name) {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls[b.ID] = planCall{name: b.Name, input: b.Input, shown: true}
+}
+
 // result is a tool's result, if it is a task tool's: the tasks change as
-// it says. structured is the tool's own output, when claude gave it.
+// it says. structured is the tool's own output, when claude gave it. It
+// says the result is the plan's, not a call's to end.
 func (p *plan) result(b claudeagent.Block, structured json.RawMessage) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -94,9 +109,20 @@ func (p *plan) result(b claudeagent.Block, structured json.RawMessage) bool {
 		return false
 	}
 	delete(p.calls, b.ToolUseID)
-	if b.IsError {
-		return true
+	if !b.IsError && p.applyLocked(call, b, structured) {
+		entries := []acp.PlanEntry{}
+		for _, id := range p.order {
+			t := p.tasks[id]
+			entries = append(entries, entry(t.Subject, t.ActiveForm, t.Status))
+		}
+		p.sendLocked(entries)
 	}
+	return !call.shown
+}
+
+// applyLocked changes the tasks as the task tool's call's result b says;
+// false when they don't change.
+func (p *plan) applyLocked(call planCall, b claudeagent.Block, structured json.RawMessage) bool {
 	text, _ := resultParts(b.Content)
 	var in struct {
 		task
@@ -107,7 +133,7 @@ func (p *plan) result(b claudeagent.Block, structured json.RawMessage) bool {
 	case "TaskCreate":
 		id := createdID(structured, text)
 		if id == "" {
-			return true
+			return false
 		}
 		in.ID, in.Status = id, "pending"
 		if p.tasks[id] == nil {
@@ -118,7 +144,7 @@ func (p *plan) result(b claudeagent.Block, structured json.RawMessage) bool {
 		t := p.tasks[in.TaskID]
 		switch {
 		case t == nil:
-			return true
+			return false
 		case in.Status == "deleted":
 			delete(p.tasks, in.TaskID)
 			p.order = slices.DeleteFunc(p.order, func(id string) bool { return id == in.TaskID })
@@ -130,22 +156,21 @@ func (p *plan) result(b claudeagent.Block, structured json.RawMessage) bool {
 	case "TaskList":
 		tasks, ok := listed(structured, text)
 		if !ok {
-			return true
+			return false
 		}
+		// The listing has no active forms: each task keeps the one it had.
+		was := p.tasks
 		p.tasks, p.order = map[string]*task{}, nil
 		for _, t := range tasks {
+			if old := was[t.ID]; old != nil && t.ActiveForm == "" {
+				t.ActiveForm = old.ActiveForm
+			}
 			p.tasks[t.ID] = &t
 			p.order = append(p.order, t.ID)
 		}
 	default: // TaskGet changes nothing
-		return true
+		return false
 	}
-	entries := []acp.PlanEntry{}
-	for _, id := range p.order {
-		t := p.tasks[id]
-		entries = append(entries, entry(t.Subject, t.ActiveForm, t.Status))
-	}
-	p.sendLocked(entries)
 	return true
 }
 

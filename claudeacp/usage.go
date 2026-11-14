@@ -55,14 +55,16 @@ func (w *window) sendLocked(u shownUsage, cost *acp.Cost, meta map[string]any) {
 // top-level message's counts and no tokens: a slash command claude
 // answered itself, /context, /compact) sends no usage, as
 // claude-agent-acp sends none, so a session not yet counted isn't shown
-// at zero. A prompt's turn that showed no text shows the result's. Then
-// the turn engine ends the turn.
+// at zero. A prompt's turn that showed no text shows the result's,
+// unless it showed a compaction, whose call has said what the result's
+// text says. Then the turn engine ends the turn.
 func (s *session) result(r *claudeagent.Result) {
 	s.resultWindow(r, s.st.model)
+	compacted := s.tools.compactionShown()
 	s.mu.Lock()
 	user := s.userLaneLocked(r)
 	t := s.targetLocked(s.namedLocked(resultIDs(r)))
-	fallback := user && t != nil && (!t.textSent || s.st.local) && !s.dropTop && r.Subtype == "success" && !r.IsError && r.Result != ""
+	fallback := user && t != nil && (!t.textSent || s.st.local) && !compacted && !s.dropTop && r.Subtype == "success" && !r.IsError && r.Result != ""
 	why := endedTurn
 	if s.dropTop || t != nil && t.cancelled {
 		why = endedCancel
@@ -89,6 +91,7 @@ func (s *session) result(r *claudeagent.Result) {
 	end := ending{errorKind: s.st.errorKind, incomplete: incomplete,
 		login: s.st.login || r.IsError && strings.Contains(r.Result, "Please run /login")}
 	s.st.local, s.st.refused, s.st.login, s.st.counted = false, "", false, false
+	clear(s.st.noticed)
 	if s.fastState(r.FastModeState, r.FastModeDisabledReason) {
 		s.cfg.sendOptions()
 	}

@@ -41,7 +41,7 @@ func (c *commands) sendAll() {
 		if slices.Contains(hiddenCommands, cmd.Name) || slices.Contains(c.terminal, cmd.Name) {
 			continue
 		}
-		ac := acp.AvailableCommand{Name: cmd.Name, Description: cmd.Description}
+		ac := acp.AvailableCommand{Name: clientName(cmd.Name), Description: cmd.Description}
 		if cmd.ArgumentHint != "" {
 			ac.Input = &acp.AvailableCommandInput{Unstructured: &acp.UnstructuredCommandInput{Hint: cmd.ArgumentHint}}
 		}
@@ -50,6 +50,20 @@ func (c *commands) sendAll() {
 	c.send(acp.SessionUpdate{SessionUpdate: "available_commands_update",
 		AvailableCommandsUpdate: &acp.AvailableCommandsUpdate{AvailableCommands: out}})
 }
+
+// clientName is a command's name as claude-agent-acp gives it: an MCP
+// server's prompt, which claude names "server:prompt (MCP)", is
+// "mcp:server:prompt", a name with no space; promptToClaude turns it
+// back.
+func clientName(name string) string {
+	if strings.HasSuffix(name, mcpSuffix) {
+		return "mcp:" + strings.Replace(name, mcpSuffix, "", 1)
+	}
+	return name
+}
+
+// mcpSuffix ends the name claude gives an MCP server's prompt.
+const mcpSuffix = " (MCP)"
 
 // changed is claude's new list of commands.
 func (c *commands) changed(list []claudeagent.Command) {
