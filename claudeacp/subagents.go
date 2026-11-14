@@ -176,12 +176,23 @@ func (k *subagents) sessionOf(agent string) string {
 }
 
 // inBackground says the subagent agent runs in the background, where a
-// cancel of the session's turn doesn't reach.
+// cancel of the session's turn doesn't reach: it, or a subagent it runs
+// under (a background subagent's foreground one), is in the background
+// and still running.
 func (k *subagents) inBackground(agent string) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	sa := k.byID[agent]
-	return sa != nil && sa.background && !sa.ended
+	for range len(k.byID) { // a cycle can't hold it
+		switch {
+		case sa == nil || sa.ended:
+			return false
+		case sa.background:
+			return true
+		}
+		sa = k.byID[sa.parent]
+	}
+	return false
 }
 
 // stopsWith says the subagent agent stops when claude stops the subagent

@@ -253,34 +253,57 @@ func TestSubagentAsks(t *testing.T) {
 			t.Errorf("claude was asked %v", got)
 		}
 	})
-	t.Run("the turn cancelled", func(t *testing.T) {
-		opened, release := make(chan struct{}), make(chan struct{})
-		f := fake(user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), agentDone, ask,
-			claudetest.Until(release), result(names("id2")), claudetest.Send(idle),
-			answers("toolu_s", `{"behavior":"allow"}`))
-		p := start(t, withSubagents, f)
-		withdrawn := make(chan bool, 1)
-		p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
-			close(opened)
-			<-release
-			withdrawn <- ctx.Err() != nil
-			return pick(optAllowOnce)(ctx, req)
-		}
-		sid := p.open(t)
-		w := p.prompt(t, sid, "go")
-		wait(t, opened, "the request")
-		if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: sid}); err != nil {
-			t.Fatal(err)
-		}
-		eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
-		close(release)
-		if got := stopReason(w); got != "cancelled" {
-			t.Fatal(got)
-		}
-		if <-withdrawn {
-			t.Error("the turn's cancel withdrew a background subagent's request")
-		}
-	})
+	// b2 runs in the foreground of the background a1: the cancel spares
+	// it too.
+	inner := []claudetest.Step{
+		sendf(`{"type":"assistant","parent_tool_use_id":"toolu_p","message":{"id":"msg_s","content":[{"type":"tool_use","id":"toolu_q","name":"Agent",` +
+			`"input":{"description":"Inner","prompt":"go"}}]}}`),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"b2","tool_use_id":"toolu_q","parent_task_id":"a1","task_type":"local_agent",` +
+			`"subagent_type":"general-purpose","is_backgrounded":false}`),
+		canUseTool("toolu_s", "Bash", `{"command":"ls"}`, `,"agent_id":"b2"`),
+	}
+	for _, tc := range []struct {
+		name string
+		ask  []claudetest.Step
+	}{{"the turn cancelled", []claudetest.Step{ask}}, {"the turn cancelled, a background subagent's subagent asking", inner}} {
+		t.Run(tc.name, func(t *testing.T) {
+			testTurnCancelSpares(t, tc.ask)
+		})
+	}
+}
+
+// testTurnCancelSpares has the background subagent a1's work ask
+// (steps), cancels the turn, and checks the request isn't withdrawn.
+func testTurnCancelSpares(t *testing.T, ask []claudetest.Step) {
+	t.Helper()
+	opened, release := make(chan struct{}), make(chan struct{})
+	steps := []claudetest.Step{user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), agentDone}
+	steps = append(steps, ask...)
+	steps = append(steps, claudetest.Until(release), result(names("id2")), claudetest.Send(idle),
+		answers("toolu_s", `{"behavior":"allow"}`))
+	f := fake(steps...)
+	p := start(t, withSubagents, f)
+	withdrawn := make(chan bool, 1)
+	p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+		close(opened)
+		<-release
+		withdrawn <- ctx.Err() != nil
+		return pick(optAllowOnce)(ctx, req)
+	}
+	sid := p.open(t)
+	w := p.prompt(t, sid, "go")
+	wait(t, opened, "the request")
+	if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: sid}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
+	close(release)
+	if got := stopReason(w); got != "cancelled" {
+		t.Fatal(got)
+	}
+	if <-withdrawn {
+		t.Error("the turn's cancel withdrew a background subagent's request")
+	}
 }
 
 // Stopping a subagent stops the foreground subagents it waits on too:
