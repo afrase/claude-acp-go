@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: a hook-blocked turn says why once. A result's text is shown, for a turn that showed none, only when the model wrote nothing (`output_tokens` 0) and no notice of the turn said it; a notice sent as text counts as text shown, as in claude-agent-acp.
 - `claudeacp`: an extension method it doesn't know is answered `Method not found` with `data.method`, as acp-go and claude-agent-acp answer one, where the message named the method and data was empty.
 - `claudeacp`: a prompt claude folded into a turn that waits for a steer is answered at the result that names it; it was left unanswered while claude sat idle.
 - `claudeacp`: a permission or question the stopped work asks as a cancel comes is denied, never put to the user: the check and the request's opening are one step, so the cancel either withdraws it or comes first.

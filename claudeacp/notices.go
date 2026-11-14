@@ -45,6 +45,13 @@ func (s *session) notice(m *claudeagent.Informational) {
 		}
 		n.Title, n.Description = splitNotice(content, fallback)
 		s.update(acp.SessionUpdate{SessionUpdate: "notice", Notice: n})
+		// A hook-blocked turn's result repeats the notice: the turn
+		// keeps what it said, so the result isn't shown again (result).
+		s.mu.Lock()
+		if t := s.noticedLocked(); t != nil {
+			t.notices = append(t.notices, noticeText(content))
+		}
+		s.mu.Unlock()
 		return
 	}
 	text := content
@@ -55,7 +62,30 @@ func (s *session) notice(m *claudeagent.Informational) {
 		Content: acp.ContentBlock{Text: &acp.TextContent{Text: text}},
 		Meta:    claudeCodeMeta{Kind: "informational", Level: &level}.meta(),
 	}})
+	// The line is text the turn showed, as in claude-agent-acp: a result
+	// that repeats it isn't shown again.
+	s.mu.Lock()
+	if t := s.noticedLocked(); t != nil {
+		t.textSent = true
+	}
+	s.mu.Unlock()
 }
+
+// noticedLocked is the turn a notice is of: the running one, else the
+// next.
+func (s *session) noticedLocked() *turn {
+	if s.active != nil {
+		return s.active
+	}
+	if len(s.turns) > 0 {
+		return s.turns[0]
+	}
+	return nil
+}
+
+// noticeText is a notice's text as a result's is compared with it:
+// trimmed, each run of white space one space.
+func noticeText(text string) string { return strings.Join(strings.Fields(text), " ") }
 
 // modelFallback is claude retrying a refused response on another model,
 // said as claude-agent-acp says it: a warning, or text with no message id.

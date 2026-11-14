@@ -353,3 +353,52 @@ func TestMemoryRecall(t *testing.T) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+var withNotices = &acp.ClientCapabilities{Session: &acp.ClientSessionCapabilities{Notices: &acp.NoticeCapabilities{}}}
+
+// A hook-blocked turn says why once: the result repeats the block's
+// notice and isn't shown again, for a client that shows notices or one
+// that has them as text. A result whose model wrote (output tokens) isn't
+// shown either, as claude-agent-acp keeps that for a turn claude
+// answered alone.
+func TestResultRepeatsNotice(t *testing.T) {
+	blocked := []claudetest.Step{user("id2"), echo("id2"),
+		sendf(`{"type":"system","subtype":"informational","level":"warning","content":"UserPromptSubmit operation blocked by hook:\nno secrets"}`),
+		sendf(`{"type":"result","subtype":"success","is_error":false,"uuid":"r1","result":"UserPromptSubmit operation blocked by hook:\n no secrets ",` +
+			`"usage":{"input_tokens":0,"output_tokens":0},"user_message_uuids":["id2"]}`),
+		claudetest.Send(idle)}
+	for _, tc := range []struct {
+		name    string
+		caps    *acp.ClientCapabilities
+		notices int
+		chunks  []string
+	}{
+		{"notices", withNotices, 1, nil},
+		{"text", nil, 0, []string{"**Warning:** UserPromptSubmit operation blocked by hook:\nno secrets"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := start(t, tc.caps, fake(blocked...))
+			if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+				t.Fatal(got)
+			}
+			var chunks []string
+			for _, u := range p.of("agent_message_chunk") {
+				chunks = append(chunks, u.AgentMessageChunk.Content.Text.Text)
+			}
+			if n := len(p.of("notice")); n != tc.notices || !slices.Equal(chunks, tc.chunks) {
+				t.Errorf("%d notices, chunks %q", n, chunks)
+			}
+		})
+	}
+	t.Run("the model wrote", func(t *testing.T) {
+		p := start(t, nil, fake(user("id2"), echo("id2"),
+			sendf(`{"type":"result","subtype":"success","is_error":false,"result":"Done.","usage":{"output_tokens":5},"user_message_uuids":["id2"]}`),
+			claudetest.Send(idle)))
+		if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+			t.Fatal(got)
+		}
+		if got := p.texts(); len(got) != 0 {
+			t.Errorf("%q", got)
+		}
+	})
+}

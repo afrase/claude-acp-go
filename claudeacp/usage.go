@@ -1,6 +1,7 @@
 package claudeacp
 
 import (
+	"slices"
 	"strings"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -55,16 +56,20 @@ func (w *window) sendLocked(u shownUsage, cost *acp.Cost, meta map[string]any) {
 // top-level message's counts and no tokens: a slash command claude
 // answered itself, /context, /compact) sends no usage, as
 // claude-agent-acp sends none, so a session not yet counted isn't shown
-// at zero. A prompt's turn that showed no text shows the result's,
-// unless it showed a compaction, whose call has said what the result's
-// text says. Then the turn engine ends the turn.
+// at zero. A prompt's turn that showed no text shows the result's when
+// the model wrote none (no output tokens: claude answered alone), as
+// claude-agent-acp does; not when it showed a compaction, whose call has
+// said what the result's text says, or a notice that said it (a hook's
+// block). A slash command's output is always shown. Then the turn engine
+// ends the turn.
 func (s *session) result(r *claudeagent.Result) {
 	s.resultWindow(r, s.st.model)
 	compacted := s.tools.compactionShown()
 	s.mu.Lock()
 	user := s.userLaneLocked(r)
 	t := s.targetLocked(s.namedLocked(resultIDs(r)))
-	fallback := user && t != nil && (!t.textSent || s.st.local) && !compacted && !s.dropTop && r.Subtype == "success" && !r.IsError && r.Result != ""
+	untold := t != nil && !t.textSent && r.Usage.OutputTokens == 0 && !slices.Contains(t.notices, noticeText(r.Result))
+	fallback := user && t != nil && (untold || s.st.local) && !compacted && !s.dropTop && r.Subtype == "success" && !r.IsError && r.Result != ""
 	why := endedTurn
 	if s.dropTop || t != nil && t.cancelled {
 		why = endedCancel
