@@ -187,7 +187,7 @@ func resultContent(name string, b claudeagent.Block, structured json.RawMessage)
 			return content, content != nil
 		}
 	case "Agent", "Task":
-		text = handedBack(strings.TrimSpace(usageBlock.ReplaceAllString(text, "")))
+		text = handedBack(text)
 	}
 	if b.IsError && text != "" {
 		text = fence("", text)
@@ -332,7 +332,7 @@ func agentReport(structured json.RawMessage) (content []acp.ToolCallContent, ok,
 		return nil, false, false
 	}
 	text, shown := resultParts(out.Content)
-	return append(texts(text), shown...), true, true
+	return append(texts(partialLabelled(text)), shown...), true, true
 }
 
 // nonEmpty is those of ss that aren't "".
@@ -340,24 +340,91 @@ func nonEmpty(ss ...string) []string {
 	return slices.DeleteFunc(ss, func(s string) bool { return s == "" })
 }
 
-// handedBack is a foreground subagent's report out of the frame claude
-// puts around it for the model, as claude-agent-acp
-// shows it: without the frame's words, the indent claude gives each line,
-// or what claude adds after it (the agent's id, its worktree). Any other
-// text comes back as it is.
+// handedBack is a subagent's report out of what claude puts around it
+// for the model, as claude-agent-acp shows it: without its trailer (its
+// token counts, the agent's id), the frame's words and the indent the
+// frame gives each line; claude's notes above the frame lead it, a turn
+// limit's as a short label. Any other text comes back as it is.
 func handedBack(text string) string {
-	_, report, ok := strings.Cut(text, handBackEnd)
-	if !strings.HasPrefix(text, handBackStart) || !ok {
+	text = unframed(withoutAgentID(withoutUsage(text)))
+	return partialLabelled(strings.TrimSpace(text))
+}
+
+// withoutUsage is text without the <usage> block it ends with. Only the
+// last is cut, so a report that mentions the tag keeps its text.
+func withoutUsage(text string) string {
+	body := strings.TrimRightFunc(text, unicode.IsSpace)
+	rest, ok := strings.CutSuffix(body, usageEnd)
+	if !ok {
+		return text
+	}
+	i := strings.LastIndex(rest, usageStart)
+	if i < 0 {
+		return text
+	}
+	return strings.TrimSuffix(body[:i], "\n")
+}
+
+// withoutAgentID is text without the "agentId: … (use SendMessage …)"
+// line it ends with, framed or not (an older claude, an old transcript).
+func withoutAgentID(text string) string {
+	body := strings.TrimRightFunc(text, unicode.IsSpace)
+	start := strings.LastIndex(body, "\n") + 1
+	if !agentIDLine.MatchString(body[start:]) {
+		return text
+	}
+	return body[:max(start-1, 0)]
+}
+
+// unframed is text without the frame claude puts around a subagent's
+// report, a line of its own; the report and claude's notes above the
+// frame lose its indent, and the notes come first. What claude adds
+// after the report (the agent's id, its worktree) goes.
+func unframed(text string) string {
+	start := 0
+	if !strings.HasPrefix(text, handBackStart) {
+		i := strings.Index(text, "\n"+handBackStart)
+		if i < 0 {
+			return text
+		}
+		start = i + 1
+	}
+	_, report, ok := strings.Cut(text[start:], handBackEnd)
+	if !ok {
 		return text
 	}
 	if i := strings.LastIndex(report, "\nagentId: "); i >= 0 {
 		report = report[:i]
 	}
-	lines := strings.Split(report, "\n")
+	report = dedented(report)
+	if notes := strings.TrimRightFunc(dedented(text[:max(start-1, 0)]), unicode.IsSpace); notes != "" {
+		return notes + "\n\n" + report
+	}
+	return report
+}
+
+// dedented is text without the two spaces the frame puts before each
+// line; a line without them stays as it is.
+func dedented(text string) string {
+	lines := strings.Split(text, "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimPrefix(l, "  ")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// partialLabelled is text with claude's note that the subagent stopped at
+// its turn limit, its first paragraph, as a short label: the note's advice
+// to send the agent a message is for the model.
+func partialLabelled(text string) string {
+	if !partialNote.MatchString(text) {
+		return text
+	}
+	_, report, _ := strings.Cut(text, "\n\n")
+	if report = strings.TrimLeftFunc(report, unicode.IsSpace); report == "" {
+		return partialLabel
+	}
+	return partialLabel + "\n\n" + report
 }
 
 // resultParts reads a tool_result's content, a string, a block or
@@ -507,20 +574,27 @@ func byteSize(n int) string {
 	return strconv.FormatFloat(float64(n)/(1024*1024), 'f', 1, 64) + " MB"
 }
 
-// handBackStart and handBackEnd open a foreground subagent's report.
+// handBackStart and handBackEnd open a foreground subagent's report;
+// usageStart and usageEnd hold its token counts, after it.
 const (
 	handBackStart = "[Subagent hand-back] "
 	handBackEnd   = "The report follows:\n"
+	usageStart    = "<usage>"
+	usageEnd      = "</usage>"
+	partialLabel  = "[Agent stopped at its turn limit — the output below is partial]"
 )
 
 var (
 	// reminders are the notes claude adds to a file it read, for the
 	// model.
 	reminders = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
-	// usageBlock is what a subagent's result ends with: its token counts,
-	// for the model.
-	usageBlock = regexp.MustCompile(`(?s)<usage>.*?</usage>`)
-	backticks  = regexp.MustCompile("`+")
+	// agentIDLine is the line claude ends a subagent's result with, for
+	// the model to go on with it.
+	agentIDLine = regexp.MustCompile(`^agentId: [\w-]+ \([^)]*\)$`)
+	// partialNote starts claude's note on a subagent that stopped at its
+	// turn limit, indented when the frame had no report to hold.
+	partialNote = regexp.MustCompile(`^(?:  )?NOTE: this agent stopped at its \d+-turn limit before finishing\.`)
+	backticks   = regexp.MustCompile("`+")
 )
 
 // fence fences text as a Markdown code block, with a fence longer than

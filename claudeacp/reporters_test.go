@@ -2,6 +2,7 @@ package claudeacp
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -171,5 +172,36 @@ func TestResultFromStructured(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s %s: %q, want %q", tc.name, tc.structured, got, tc.want)
 		}
+	}
+}
+
+// A subagent's report shows without claude's frame and trailer wherever
+// they are: notes above the frame lead the report, a turn limit's as a
+// label; an unframed report loses its agentId line; only a trailing
+// <usage> block goes.
+func TestHandedBack(t *testing.T) {
+	frame := "[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n"
+	for _, tc := range []struct{ in, want string }{
+		{"  NOTE: this agent stopped at its 5-turn limit before finishing. Send it a message (SendMessage) to go on.\n" + frame +
+			"  Line one.\n\n  Line two.\nagentId: a1 (use SendMessage to continue)\n<usage>tokens: 5</usage>",
+			"[Agent stopped at its turn limit — the output below is partial]\n\nLine one.\n\nLine two."},
+		{"  Output saved to /tmp/x\n" + frame + "  Line one.\nagentId: a1 (use SendMessage to continue)", "Output saved to /tmp/x\n\nLine one."},
+		{"Done.\nagentId: a1 (use SendMessage with to: 'a1' to continue this agent)", "Done."},
+		{"Done.\nagentId: a1\n<usage>x</usage>", "Done.\nagentId: a1"}, // no "(…)": not claude's line
+		{"Use <usage>a</usage> tags.\n<usage>tokens: 5</usage>", "Use <usage>a</usage> tags."},
+		{"NOTE: this agent stopped at its 3-turn limit before finishing.", "[Agent stopped at its turn limit — the output below is partial]"},
+		{"Says [Subagent hand-back] The report follows:\nno frame", "Says [Subagent hand-back] The report follows:\nno frame"},
+	} {
+		content, _ := resultContent("Agent", claudeagent.Block{Content: json.RawMessage(strconv.Quote(tc.in))}, nil)
+		if len(content) != 1 || content[0].Content.Content.Text.Text != tc.want {
+			b, _ := json.Marshal(content)
+			t.Errorf("%q:\n%s\nwant %q", tc.in, b, tc.want)
+		}
+	}
+	content, _ := resultContent("Agent", claudeagent.Block{Content: json.RawMessage(`"raw"`)},
+		json.RawMessage(`{"status":"completed","content":[{"type":"text","text":"NOTE: this agent stopped at its 5-turn limit before finishing. Go on.\n\nPartial."}]}`))
+	if len(content) != 1 || content[0].Content.Content.Text.Text != "[Agent stopped at its turn limit — the output below is partial]\n\nPartial." {
+		b, _ := json.Marshal(content)
+		t.Errorf("%s", b)
 	}
 }
