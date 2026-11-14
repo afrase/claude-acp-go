@@ -186,6 +186,7 @@ func version(claude string, env []string) string {
 type cassette struct {
 	w     io.Writer
 	start time.Time
+	clock func() time.Time // time.Now, or a test's
 	mu    sync.Mutex
 	err   error // the first write that failed
 }
@@ -243,9 +244,15 @@ func (c *cassette) record(dir string, line []byte) {
 	} else if !json.Valid(frame) {
 		frame, _ = json.Marshal(text)
 	}
-	b, err := json.Marshal(claudetest.Frame{Dir: dir, MS: time.Since(c.start).Milliseconds(), Frame: frame})
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Stamped under the lock, so the frames' times go up in the file's
+	// order whichever copier writes first.
+	now := time.Now
+	if c.clock != nil {
+		now = c.clock
+	}
+	b, err := json.Marshal(claudetest.Frame{Dir: dir, MS: now().Sub(c.start).Milliseconds(), Frame: frame})
 	if err == nil {
 		_, err = c.w.Write(append(b, '\n'))
 	}
