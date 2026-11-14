@@ -39,7 +39,7 @@ func TestNotices(t *testing.T) {
 	want := []string{
 		`Synced.||{"claudeCode":{"kind":"informational","level":"info"}}`,
 		`**Notice:** Opus 5.5's safeguards stopped the response above||{"claudeCode":{"kind":"informational","level":"notice"}}`,
-		`**Model fallback:** Retrying with b.||null`,
+		`**Model fallback:** a declined this request; retried with b. The session will continue on b.||null`,
 	}
 	if got := p.chunks(); !slices.Equal(got, want) {
 		t.Errorf("%q", got)
@@ -53,7 +53,7 @@ func TestNotices(t *testing.T) {
 	for _, u := range p.of("notice") {
 		got = append(got, string(u.Notice.Severity)+" "+u.Notice.Title)
 	}
-	if want := []string{"info Opus 5.5's safeguards stopped the response above", "warning Retrying with b."}; !slices.Equal(got, want) || len(p.chunks()) != 0 {
+	if want := []string{"info Opus 5.5's safeguards stopped the response above", "warning a declined this request; retried with b. The session will continue on b."}; !slices.Equal(got, want) || len(p.chunks()) != 0 {
 		t.Errorf("%q %q", got, p.chunks())
 	}
 }
@@ -246,6 +246,53 @@ func TestCompactionSummary(t *testing.T) {
 		{"Just a summary.", "Just a summary."},
 	} {
 		if got := compactionSummary(tc.in); got != tc.want {
+			t.Errorf("%q: %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A notice is plain text, its first line its title and the rest its
+// description, said once per tool use; a model fallback's says what
+// happened, and the API's explanation below, as claude-agent-acp says
+// them.
+func TestNoticeShape(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		sendf(`{"type":"system","subtype":"informational","level":"warning","tool_use_id":"tu1","content":"Waiting on MCP"}`),
+		sendf(`{"type":"system","subtype":"informational","level":"warning","tool_use_id":"tu1","content":"Waiting on MCP"}`),
+		sendf(`{"type":"system","subtype":"informational","level":"warning","content":"## Stop hook feedback:\n- [bash ./check.sh]: **tests failed** in `+"`go test`"+`\nline3"}`),
+		sendf(`{"type":"system","subtype":"informational","level":"notice","content":"`+strings.Repeat("x", 300)+`\nmore"}`),
+		sendf(`{"type":"system","subtype":"model_refusal_fallback","original_model":"a","fallback_model":"b","direction":"retry","scope":"local","api_refusal_category":"cyber","api_refusal_explanation":"Not that.","content":"Retrying."}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, &acp.ClientCapabilities{Session: &acp.ClientSessionCapabilities{Notices: &acp.NoticeCapabilities{}}}, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	var got []string
+	for _, u := range p.of("notice") {
+		got = append(got, string(u.Notice.Severity)+" "+u.Notice.Title+" | "+u.Notice.Description)
+	}
+	want := []string{
+		"warning Waiting on MCP | ",
+		"warning Stop hook feedback: | - [bash ./check.sh]: tests failed in go test\nline3",
+		"info Claude reported a notice | " + strings.Repeat("x", 300) + "\nmore",
+		"warning a declined this request (cyber); retried with b. Only that response came from b; the session stays on a. | Not that.",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// Only Markdown that reads as such goes from a notice's text.
+func TestPlainText(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"**bold** and __also__", "bold and also"},
+		{"a ** b ** c", "a ** b ** c"},
+		{"snake_case__name and 2**3", "snake_case__name and 2**3"},
+		{"run `make` or ``x``, not a`b`c", "run make or ``x``, not a`b`c"},
+		{"  ### Title\nbody #1", "Title\nbody #1"},
+		{"**émoji ✓**", "émoji ✓"},
+	} {
+		if got := plainText(tc.in); got != tc.want {
 			t.Errorf("%q: %q, want %q", tc.in, got, tc.want)
 		}
 	}

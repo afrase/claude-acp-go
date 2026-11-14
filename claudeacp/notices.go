@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -17,23 +19,32 @@ import (
 // compaction, recalled memories, a slash command's output, a refusal.
 
 // notice tells the user something of claude's: as ACP's notice to a
-// client that shows them; else as message text with no message id,
-// "**Level:** " before it (none for info) and _meta.claudeCode saying it
-// is a notice, so a client that knows claude can tell it from the
-// model's words (the shape claude-agent-acp gives, which clients read).
-func (s *session) notice(level, content string) {
+// client that shows them, the text's first line its title and the rest
+// its description (claude-agent-acp's shape); else as message text with
+// no message id, "**Level:** " before it (none for info) and
+// _meta.claudeCode saying it is a notice, so a client that knows claude
+// can tell it from the model's words.
+func (s *session) notice(m *claudeagent.Informational) {
+	level, content := m.Level, m.Content
 	if content == "" {
 		return
 	}
 	if s.a.clientCaps().notices {
-		if level == "info" {
-			return // a notice client is told what matters only
+		// A notice client is told what matters only, once per tool use:
+		// claude repeats a tool's progress, and a notice can't be updated.
+		if level == "info" || m.ToolUseID != "" && s.st.noticed[m.ToolUseID] {
+			return
 		}
-		sev := acp.NoticeSeverityInfo
+		if m.ToolUseID != "" {
+			s.st.noticed[m.ToolUseID] = true
+		}
+		n := &acp.Notice{Severity: acp.NoticeSeverityInfo}
+		fallback := "Claude reported a notice"
 		if level == "warning" {
-			sev = acp.NoticeSeverityWarning
+			n.Severity, fallback = acp.NoticeSeverityWarning, "Claude reported a warning"
 		}
-		s.update(acp.SessionUpdate{SessionUpdate: "notice", Notice: &acp.Notice{Severity: sev, Title: content}})
+		n.Title, n.Description = splitNotice(content, fallback)
+		s.update(acp.SessionUpdate{SessionUpdate: "notice", Notice: n})
 		return
 	}
 	text := content
@@ -46,21 +57,127 @@ func (s *session) notice(level, content string) {
 	}})
 }
 
-// modelFallback is claude retrying a refused response on another model:
-// text with no message id, as claude-agent-acp sends it, or a warning.
+// modelFallback is claude retrying a refused response on another model,
+// said as claude-agent-acp says it: a warning, or text with no message id.
 func (s *session) modelFallback(m *claudeagent.ModelRefusalFallback) {
-	text := m.Content
-	if text == "" {
-		text = "Retried with " + m.FallbackModel + " after " + m.OriginalModel + " refused."
+	local := m.Scope == "local"
+	outcome := "The session will continue on " + m.FallbackModel + "."
+	switch {
+	case local:
+		outcome = "Only that response came from " + m.FallbackModel + "; the session stays on " + m.OriginalModel + "."
+	case m.Direction == "revert":
+		outcome = "The session stays on " + m.OriginalModel + "."
 	}
-	if s.a.clientCaps().notices {
-		s.update(acp.SessionUpdate{SessionUpdate: "notice", Notice: &acp.Notice{Severity: acp.NoticeSeverityWarning, Title: text}})
+	category := ""
+	if m.APIRefusalCategory != "" {
+		category = " (" + m.APIRefusalCategory + ")"
+	}
+	summary := m.OriginalModel + " declined this request" + category + "; retried with " + m.FallbackModel + ". " + outcome
+	whole := summary
+	if m.APIRefusalExplanation != "" {
+		whole += "\n\n" + m.APIRefusalExplanation
+	}
+	if !s.a.clientCaps().notices {
+		s.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk", AgentMessageChunk: &acp.ContentChunk{
+			Content: acp.ContentBlock{Text: &acp.TextContent{Text: "**Model fallback:** " + whole}},
+		}})
 		return
 	}
-	s.update(acp.SessionUpdate{SessionUpdate: "agent_message_chunk", AgentMessageChunk: &acp.ContentChunk{
-		Content: acp.ContentBlock{Text: &acp.TextContent{Text: "**Model fallback:** " + text}},
-	}})
+	n := &acp.Notice{Severity: acp.NoticeSeverityWarning, Title: summary, Description: m.APIRefusalExplanation}
+	if utf8.RuneCountInString(summary) > maxNoticeTitle {
+		n.Title, n.Description = "Model fallback", whole
+	}
+	s.update(acp.SessionUpdate{SessionUpdate: "notice", Notice: n})
 }
+
+// maxNoticeTitle is the longest line that is a notice's title on its
+// own, as claude-agent-acp has it.
+const maxNoticeTitle = 256
+
+// splitNotice is text as a notice's title and description, as
+// claude-agent-acp shapes it: plain text, its first line the title and
+// the rest the description; a first line too long for a title makes the
+// whole text the description, under fallback.
+func splitNotice(text, fallback string) (title, description string) {
+	text = strings.TrimSpace(plainText(text))
+	if text == "" {
+		return fallback, ""
+	}
+	first, rest, _ := strings.Cut(text, "\n")
+	first = strings.TrimRightFunc(first, unicode.IsSpace)
+	if utf8.RuneCountInString(first) > maxNoticeTitle {
+		return fallback, text
+	}
+	return first, strings.TrimSpace(rest)
+}
+
+// plainText is text without the inline Markdown a notice can't show:
+// headings' marks, bold's and code's.
+func plainText(text string) string {
+	text = headingMark.ReplaceAllString(text, "")
+	return unmarked(unmarked(text, unbolded), uncoded)
+}
+
+// unmarked is text with each span at matches replaced by what it holds;
+// at says the span starting at text[i:], if one does: its end and what
+// it holds.
+func unmarked(text string, at func(text string, i int) (end int, inner string, ok bool)) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		if end, inner, ok := at(text, i); ok {
+			b.WriteString(inner)
+			i = end
+			continue
+		}
+		b.WriteByte(text[i])
+		i++
+	}
+	return b.String()
+}
+
+// unbolded finds bold at text[i:]: ** or __, text that starts and ends
+// with no space, and the same mark.
+func unbolded(text string, i int) (int, string, bool) {
+	rest := text[i:]
+	if !strings.HasPrefix(rest, "**") && !strings.HasPrefix(rest, "__") {
+		return 0, "", false
+	}
+	mark := rest[:2]
+	if r, _ := utf8.DecodeRuneInString(rest[2:]); rest[2:] == "" || unicode.IsSpace(r) {
+		return 0, "", false
+	}
+	for j := 3; j+2 <= len(rest); j++ {
+		if r, _ := utf8.DecodeLastRuneInString(rest[:j]); rest[j:j+2] == mark && !unicode.IsSpace(r) {
+			return i + j + 2, rest[2:j], true
+		}
+	}
+	return 0, "", false
+}
+
+// uncoded finds inline code at text[i:]: a backtick, text of one line,
+// and a backtick, with no word or backtick against either.
+func uncoded(text string, i int) (int, string, bool) {
+	if text[i] != '`' || i > 0 && wordOrTick(text[i-1]) {
+		return 0, "", false
+	}
+	n := strings.IndexAny(text[i+1:], "`\n")
+	if n <= 0 || text[i+1+n] != '`' {
+		return 0, "", false
+	}
+	end := i + 1 + n + 1
+	if end < len(text) && wordOrTick(text[end]) {
+		return 0, "", false
+	}
+	return end, text[i+1 : end-1], true
+}
+
+// wordOrTick says c is a word's (ASCII letter, digit or _) or a backtick.
+func wordOrTick(c byte) bool {
+	return c == '_' || c == '`' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
+
+// headingMark is a Markdown heading's #s, at a line's start.
+var headingMark = regexp.MustCompile(`(?m)^[ \t]*#{1,6}[ \t]+`)
 
 // compacting starts a compaction: as ACP's compaction updates to a
 // client that declared them, else as a tool call of its own ("compact",

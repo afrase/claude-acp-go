@@ -22,6 +22,7 @@ type stream struct {
 	counted   bool                 // a top-level message said its counts, this turn
 	local     bool                 // a slash command claude ran itself printed, this turn
 	refused   string               // why the model refused, this turn
+	noticed   map[string]bool      // tool uses a notice was sent for, this turn
 	login     bool                 // claude said it isn't signed in, this turn
 }
 
@@ -33,7 +34,7 @@ type streamed struct {
 	done   int
 }
 
-func (st *stream) init() { st.msgs = map[string]*streamed{} }
+func (st *stream) init() { st.msgs, st.noticed = map[string]*streamed{}, map[string]bool{} }
 
 // handle maps one of claude's messages: to updates, and to turns'
 // starts and ends.
@@ -74,7 +75,7 @@ func (s *session) handle(m claudeagent.Message) {
 			s.tools.compactEnded(m.CompactResult, m.CompactError)
 		}
 	case *claudeagent.Informational:
-		s.notice(m.Level, m.Content)
+		s.notice(m)
 	case *claudeagent.ModelRefusalFallback:
 		s.modelFallback(m)
 	case *claudeagent.ModelRefusalNoFallback:

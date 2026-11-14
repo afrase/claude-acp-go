@@ -193,6 +193,13 @@ type ModelRefusalFallback struct {
 	APIRefusalExplanation  string `json:"api_refusal_explanation"`
 	RefusedUserMessageUUID string `json:"refused_user_message_uuid"`
 	Content                string `json:"content"`
+	// Direction is "retry" (the session goes on with the fallback model)
+	// or, from an older claude, "revert" (it stays on its own); Scope
+	// "local" says only a subagent's or a side question's response fell
+	// back. APIRefusalCategory is the API's kind of refusal.
+	Direction          string `json:"direction"`
+	Scope              string `json:"scope"`
+	APIRefusalCategory string `json:"api_refusal_category"`
 }
 
 // ModelRefusalNoFallback is a refusal with no model to retry on.
