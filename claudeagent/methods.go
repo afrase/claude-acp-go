@@ -158,12 +158,18 @@ func (s *Session) StopTask(ctx context.Context, taskID string) error {
 }
 
 // CancelAsyncMessage drops a user message claude has queued and not yet
-// taken, by its uuid.
-func (s *Session) CancelAsyncMessage(ctx context.Context, uuid string) error {
-	return s.do(ctx, struct {
+// taken, by its uuid. cancelled says whether it was dropped: false when
+// claude had already taken it into a turn, or folded it into a batch,
+// and will act on it.
+func (s *Session) CancelAsyncMessage(ctx context.Context, uuid string) (cancelled bool, err error) {
+	var r struct {
+		Cancelled bool `json:"cancelled"`
+	}
+	err = s.do(ctx, struct {
 		ask
 		MessageUUID string `json:"message_uuid"`
-	}{ask{"cancel_async_message"}, uuid}, nil)
+	}{ask{"cancel_async_message"}, uuid}, &r)
+	return r.Cancelled, err
 }
 
 // ContextUsage is how the context window is spent.
@@ -180,8 +186,12 @@ type ContextUsage struct {
 // ContextCategory is one kind of what fills the context window: the
 // system prompt, tools, messages, free space.
 type ContextCategory struct {
-	Name       string `json:"name"`
-	Tokens     int    `json:"tokens"`
+	Name   string `json:"name"` // English, for display: claude may reword it
+	Tokens int    `json:"tokens"`
+	// Kind is what to classify the category on, never Name: "used",
+	// "free", "buffer" (kept for compaction) or "deferred"; claude may
+	// add more, and an older one sends none ("").
+	Kind       string `json:"kind"`
 	IsDeferred bool   `json:"isDeferred"`
 }
 

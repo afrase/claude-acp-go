@@ -193,7 +193,7 @@ func (s *Session) begin(ctx context.Context, body requestBody, timeout bool) (*C
 	frame := controlRequestLine{Type: "control_request", RequestID: c.id, Request: body}
 	var err error
 	if c.subtype == "initialize" && !s.initWritten() {
-		err = s.t.write(frame)
+		err = s.t.write(ctx, frame)
 		s.initDone()
 	} else {
 		err = s.write(ctx, frame)
@@ -219,19 +219,32 @@ func (c *Call) answer() (json.RawMessage, error) {
 	if c.timeout {
 		expired = c.s.after(requestTimeout)
 	}
+	var err error
 	select {
 	case r := <-c.ch:
-		if ce, ok := errors.AsType[*ControlError](r.err); ok {
-			ce.Subtype = c.subtype
-		}
-		return r.payload, r.err
+		return c.got(r)
 	case <-c.ctx.Done():
-		c.s.withdraw(c.ctx, c.id)
-		return nil, fmt.Errorf("claudeagent: %s: %w", c.subtype, c.ctx.Err())
+		err = fmt.Errorf("claudeagent: %s: %w", c.subtype, c.ctx.Err())
 	case <-expired:
-		c.s.withdraw(c.ctx, c.id)
-		return nil, fmt.Errorf("claudeagent: claude didn't answer %s in %s: %w", c.subtype, requestTimeout, context.DeadlineExceeded)
+		err = fmt.Errorf("claudeagent: claude didn't answer %s in %s: %w", c.subtype, requestTimeout, context.DeadlineExceeded)
 	}
+	// An answer that came as ctx ended wins: select picked at random, and
+	// claude has done what was asked.
+	select {
+	case r := <-c.ch:
+		return c.got(r)
+	default:
+	}
+	c.s.withdraw(c.ctx, c.id)
+	return nil, err
+}
+
+// got is c's answer r as answer returns it.
+func (c *Call) got(r reply) (json.RawMessage, error) {
+	if ce, ok := errors.AsType[*ControlError](r.err); ok {
+		ce.Subtype = c.subtype
+	}
+	return r.payload, r.err
 }
 
 // Wait waits for the answer as Request does and decodes it into resp
@@ -256,10 +269,17 @@ func (s *Session) Begin(ctx context.Context, subtype string, req any) (*Call, er
 	return s.begin(ctx, body, true)
 }
 
+// withdrawTimeout bounds how long withdrawing a request waits to be
+// written: a claude that doesn't read its stdin can't take it anyway.
+const withdrawTimeout = 5 * time.Second
+
 // withdraw tells claude a request of ours is no longer wanted. It goes
-// out whether or not ctx has ended.
+// out whether or not ctx has ended, unless it can't be written within
+// withdrawTimeout.
 func (s *Session) withdraw(ctx context.Context, id string) {
-	_ = s.write(context.WithoutCancel(ctx), cancelRequestLine{Type: "control_cancel_request", RequestID: id})
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), withdrawTimeout)
+	defer cancel()
+	_ = s.write(ctx, cancelRequestLine{Type: "control_cancel_request", RequestID: id})
 }
 
 // answered hands a control_response to the request waiting for it. One

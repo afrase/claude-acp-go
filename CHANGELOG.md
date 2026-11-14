@@ -4,6 +4,27 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- The module builds on Windows (`claudeagent/sessions` used Unix-only open flags; claude-tee Unix-only signals). `make check` and CI build and vet it for Windows; the tests still run on macOS and Linux only.
+- `claudeagent.Decode` copies the line it is given, so a message's `Raw` no longer changes when the caller reuses its buffer (a `bufio.Scanner`'s, say).
+- `claudeagent.ContextCategory` has `Kind` ("used", "free", "buffer", "deferred"), the field claude says to classify a category on, rather than its English name.
+- API change: `Session.CancelAsyncMessage` returns `(cancelled bool, err error)`. `cancelled` is false when claude had already taken the message (or folded it into a batch) and will act on it; before, nil said nothing about that.
+- `CanUseTool` may return `&Allow{…}` or `&Deny{…}`: a pointer was refused at run time as "no Allow or Deny", so the tool was denied.
+- An `Allow`'s `PermissionUpdate` built without `Destination` is sent with `DestinationSession`, and one that lacks what its type uses (`Rules` and `Behavior`, `Mode`, `Directories`) is refused with an error that names it: claude dropped such an update silently, so an "always allow" was never kept.
+- `HookFunc`'s doc says hooks fail open: an error or a missed deadline lets the guarded action go ahead. New `HookMatcher.OnFailure` (`HookFailContinue`, `HookFailBlock`) is sent as claude's `onFailure`, so an erroring guard hook can block instead.
+- Docs: the package doc has an Environment section that lists what `claudeagent` removes from, sets in and defaults in claude's environment; `Options.Env` points to it.
+- With `Options.Spawner` set, `CLIPath` goes to the Spawner as it is (`"claude"` when empty) instead of being looked up on PATH, so a fake or remote Spawner works where claude isn't installed.
+- With `Options.Log` set, claude's version is logged from its answer to initialize; no second `claude --version` process runs per session any more, and `CLAUDEAGENT_SKIP_VERSION` is gone.
+- New `claudeagent.ErrExitedBeforeInit`: `Start`'s error when claude ends before it answers initialize, whatever its exit code (with the `*ExitError` beside it for a non-zero one). `claudeacp` tells a vanished session by it rather than by the error's text.
+- A write to a claude that has exited is `ErrClosed` (wrapping the pipe's error), not a bare "broken pipe"; and `Start` against a claude that exits before initialize can be written still returns `ErrExitedBeforeInit` with the `*ExitError` and its stderr.
+- A session closes claude's stdout and stderr once they are read to the end, and its stdin once claude exits, instead of leaving the descriptors to the GC.
+- A write with an already-ended ctx (`Send`, `SetModel`…) never reaches claude; before, it did about half the time. A request whose answer came as its ctx ended returns that answer, and isn't withdrawn.
+- A write stuck on a claude that stopped reading its stdin no longer holds every other write: requests and `Send` give up as their ctx says while they wait for the write slot, so a close's bounded interrupt gets through to `Close`. Withdrawing a request waits at most 5 s to be written.
+- `claudeagent.MCPServer` sends no `"type"` when `Type` is empty (claude refused `""`, so a type-less stdio server from `_meta` was skipped), and keeps a decoded config in the new `Raw`, so the fields it doesn't name (`headersHelper`, `oauth`, `timeout`…) reach claude.
+- Security: `Options.MCPServers` no longer go on claude's command line, where any local user could read their env values and HTTP headers (tokens) with `ps`. They go in a 0600 file in a private 0700 temp folder, named by `--mcp-config` and removed once claude has answered initialize (or the start fails, or the session closes). A `Spawner` gets that path in `Spec.Args`; `claudetest.Fake.MCPConfig` returns what it held. A JSON `Options.Settings` still goes on the command line, as its doc now says.
+- `sessions.Store.Fork` with `ForkOptions.Cwd` gives the fork's records that cwd, so `List` and `Get` report the fork in its new folder (they reported the source's, and a load from there failed).
+- `sessions`: a long path's project folder under another CLI build's hash is taken only when its transcripts record that path as their cwd. The first 200 characters alone matched a sibling deep path's folder, so `List` showed, and `Fork` wrote into, another project's.
+- Docs: `sessions.Store.Fork` says the subagents' transcripts aren't copied, so a replay of a fork shows its Agent calls without their subagents.
+- New `sessions.Store.Open(ctx, id, cwd)` finds a session once and returns a `*Transcript` with `Messages`, `Subagents`, `QueuedPrompts` and `LastRecord`; a `Subagent` has `Messages` and `QueuedPrompts` of its own. Reading a session with N subagents then runs `git worktree list` once, not 3+2N times, and re-reads no sidecars. `ctx` reaches the git it runs. The `Store` methods are unchanged and work as before.
 - `claudeacp`: a Write whose content claude took as `file_text` or `file_content`, and a Bash call whose description came as `command_description`, show that text, as claude-agent-acp shows it.
 - `claudeacp`: a Read of an image shows the image and a Read of a PDF a line naming the document, where an empty code block showed; a command's image output shows too. An API server tool's result (web search, web fetch, tool search, code execution) says what it found, where the call had no content.
 - `claudeacp`: a tool's result shows the tool's own output where claude gives it (`tool_use_result`), as claude-agent-acp does, live and in a loaded session: a command's output without claude's wrapper for the model (output too long ends with where it was saved), a file read without claude's notes, a web search's hits as `Title (url)` lines, and a subagent's report.
@@ -42,6 +63,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claude-tee`: a frame's `ms` is taken as the frame is written, so times never go back in a cassette when stdin and stdout lines come together.
 - `claude-tee`: a cassette no longer keeps an MCP server's credentials in a `url` (its userinfo, and query parameters named like a key or token) or in its `args` (the values of flags so named, `NAME=value` pairs and `Authorization: …` style headers). A token in a URL's path is still kept: read a cassette before you share it.
 - The README no longer calls `claude-acp` a static binary, and shows `CGO_ENABLED=0 go install …` for one on Linux. It and the command's doc say claude's own stderr is logged as claude wrote it (capped), so it may quote a prompt.
+- `claudeacp`: a load or fork finds the session's transcript once, with `sessions.Store.Open` under the request's ctx, and the replay reads the subagents and queued prompts from it: `git worktree list` runs once per folder looked in, not 3+2N times for N subagents.
 
 ## v0.3.1 (2026-11-14)
 

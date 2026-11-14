@@ -1,6 +1,8 @@
 package claudeagent
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,20 +48,43 @@ const (
 
 // MCPServer is an MCP server claude starts or connects to for the session.
 type MCPServer struct {
-	Type    string            `json:"type"` // "stdio", "http" or "sse"
+	Type    string            `json:"type,omitempty"` // "stdio" (also ""), "http" or "sse"
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// Raw is the server's config as decoded. When set it is what claude
+	// gets, unchanged, with the fields the package doesn't name (timeout,
+	// headersHelper, oauth…); clear it to send the fields instead.
+	Raw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes m, keeping it in Raw.
+func (m *MCPServer) UnmarshalJSON(data []byte) error {
+	type plain MCPServer
+	if err := json.Unmarshal(data, (*plain)(m)); err != nil {
+		return err
+	}
+	m.Raw = bytes.Clone(data)
+	return nil
+}
+
+// MarshalJSON encodes m: Raw when set, else the fields.
+func (m MCPServer) MarshalJSON() ([]byte, error) {
+	if len(m.Raw) > 0 {
+		return m.Raw, nil
+	}
+	type plain MCPServer
+	return json.Marshal(plain(m))
 }
 
 // Options says how to run claude. The zero value runs the claude on PATH
 // in the current folder with claude's own defaults.
 type Options struct {
-	CLIPath string   // "" = claude, looked up on Env's PATH
+	CLIPath string   // "" = claude, looked up on Env's PATH; with a Spawner, passed to it as it is
 	Cwd     string   // "" = this process's
-	Env     []string // nil = os.Environ(); edited as the package doc says
+	Env     []string // nil = os.Environ(); edited as the package doc's Environment says
 
 	// Model is the model to start with, an alias ("opus") or an id; "" =
 	// claude's default. SetModel switches it later.
@@ -69,15 +94,20 @@ type Options struct {
 	FallbackModel string
 	// Effort is how hard the model works ("low", "medium", "high"…; a
 	// model's SupportedEffortLevels); "" = claude's default.
-	Effort                 string
-	PermissionMode         PermissionMode // "" = claude decides, from the settings
-	AllowBypass            bool           // lets the session switch to PermissionBypass
-	Resume                 string         // a session id to continue
-	SessionID              string         // the new session's id
-	ForkSession            bool           // with Resume: continue in a new session
-	ResumeSessionAt        string         // with Resume: the message to resume after
-	SettingSources         []string       // nil = every source; empty = none
-	Settings               string         // --settings: a JSON object, or a settings file's path
+	Effort          string
+	PermissionMode  PermissionMode // "" = claude decides, from the settings
+	AllowBypass     bool           // lets the session switch to PermissionBypass
+	Resume          string         // a session id to continue
+	SessionID       string         // the new session's id
+	ForkSession     bool           // with Resume: continue in a new session
+	ResumeSessionAt string         // with Resume: the message to resume after
+	SettingSources  []string       // nil = every source; empty = none
+	// Settings is --settings: a JSON object, or a settings file's path.
+	// An object goes on claude's command line, which other local users
+	// can read; pass secrets (an env block's tokens) in a file instead.
+	Settings string
+	// MCPServers are passed in a file only this user can read, removed
+	// once claude has answered initialize, never on claude's command line.
 	MCPServers             map[string]MCPServer
 	AddDirs                []string
 	AllowedTools           []string
@@ -121,7 +151,7 @@ type Options struct {
 	Stderr    func(line string)
 	ClientApp string       // names the app in claude's User-Agent, e.g. "myeditor/1.2"
 	MaxLine   int          // the longest stdout line read; 0 = 128 MiB
-	Spawner   Spawner      // nil = Exec
+	Spawner   Spawner      // nil = Exec; Spec.Path is then CLIPath unresolved ("claude" when "")
 	Log       *slog.Logger // nil = no log
 	// SharedGroup keeps claude in this process's group rather than one of
 	// its own (see Exec), for a program run by a supervisor that stops it
@@ -134,12 +164,14 @@ type Options struct {
 // run to tens of MiB, and a line over the cap is lost.
 const defaultMaxLine = 128 << 20
 
-// args is claude's command line (after its name) for o. Values go in the
-// --flag=value form, so one starting with "-" can't be read as a flag;
-// JSON goes in an argument of its own, as the official SDKs pass it. There
-// is no -p: claude doesn't run interactively when its stdout isn't a
-// terminal, and the SDKs rely on that too.
-func args(o Options) ([]string, error) {
+// args is claude's command line (after its name) for o, with mcpConfig
+// the path of the MCP servers' config file, if any (writeMCPConfig).
+// Values go in the --flag=value form, so one starting with "-" can't be
+// read as a flag; JSON and the config's path go in an argument of their
+// own, as the official SDKs pass them. There is no -p: claude doesn't run
+// interactively when its stdout isn't a terminal, and the SDKs rely on
+// that too.
+func args(o Options, mcpConfig string) ([]string, error) {
 	if o.FallbackModel != "" && o.FallbackModel == o.Model {
 		return nil, errors.New("claudeagent: the fallback model is the model")
 	}
@@ -177,12 +209,8 @@ func args(o Options) ([]string, error) {
 	} else if o.Settings != "" {
 		a = append(a, "--settings", o.Settings)
 	}
-	if len(o.MCPServers) > 0 {
-		config, err := json.Marshal(map[string]any{"mcpServers": o.MCPServers})
-		if err != nil {
-			return nil, fmt.Errorf("claudeagent: MCP servers: %w", err)
-		}
-		a = append(a, "--mcp-config", string(config))
+	if mcpConfig != "" {
+		a = append(a, "--mcp-config", mcpConfig)
 	}
 	for _, d := range o.AddDirs {
 		flag("add-dir", d)
@@ -238,17 +266,9 @@ func extraArg(k string) error {
 	return nil
 }
 
-// environ is claude's environment for o.
-//
-//   - CLAUDECODE goes, so claude doesn't take itself for one run inside
-//     Claude Code; NODE_OPTIONS too, which isn't meant for it.
-//   - What says an official SDK runs it goes (CLAUDE_AGENT_SDK_VERSION),
-//     and so does what says this host refreshes tokens: it never does.
-//   - CLAUDE_CODE_ENTRYPOINT is sdk-cli unless set: claude's own value for
-//     a run in print mode with no official SDK.
-//   - CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS turns on SessionState messages.
-//   - CLAUDE_AGENT_SDK_CLIENT_APP names the app in claude's User-Agent.
-//   - PWD is Cwd, when set.
+// environ is claude's environment for o, edited as the package doc's
+// Environment section says. CLAUDE_CODE_ENTRYPOINT's sdk-cli is claude's
+// own value for a run in print mode with no official SDK.
 func environ(o Options) []string {
 	base := o.Env
 	if base == nil {
@@ -290,15 +310,46 @@ func environ(o Options) []string {
 	return env
 }
 
-// spec is how to start claude for o.
-func spec(o Options) (Spec, error) {
-	a, err := args(o)
+// writeMCPConfig writes the MCP servers' config, for claude's
+// --mcp-config, to a file only this user can read, in a new folder of its
+// own, and returns its path and a func that removes both; "" when there
+// are no servers. A file, not an argument: the servers' env and headers
+// carry tokens, and any local user can read a process's arguments (ps,
+// /proc/<pid>/cmdline). claude reads the file as it starts.
+func writeMCPConfig(servers map[string]MCPServer) (path string, remove func(), err error) {
+	if len(servers) == 0 {
+		return "", func() {}, nil
+	}
+	config, err := json.Marshal(map[string]any{"mcpServers": servers})
+	if err != nil {
+		return "", nil, fmt.Errorf("claudeagent: MCP servers: %w", err)
+	}
+	dir, err := os.MkdirTemp("", "claudeagent-mcp-") // 0700
+	if err != nil {
+		return "", nil, fmt.Errorf("claudeagent: a folder for the MCP config: %w", err)
+	}
+	remove = func() { _ = os.RemoveAll(dir) }
+	path = filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(path, config, 0o600); err != nil {
+		remove()
+		return "", nil, fmt.Errorf("claudeagent: writing the MCP config: %w", err)
+	}
+	return path, remove, nil
+}
+
+// spec is how to start claude for o; mcpConfig is as args takes it.
+func spec(o Options, mcpConfig string) (Spec, error) {
+	a, err := args(o, mcpConfig)
 	if err != nil {
 		return Spec{}, err
 	}
 	env := environ(o)
 	path := o.CLIPath
 	switch {
+	case o.Spawner != nil:
+		// A Spawner may run no local program at all (a fake, a
+		// container): the name is its to resolve.
+		path = cmp.Or(path, "claude")
 	case path == "":
 		path = "claude"
 		fallthrough

@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -53,15 +54,25 @@ func TestProjectDirResolvesLinks(t *testing.T) {
 	}
 }
 
+// A long path's folder under another build's hash is found by its first
+// 200 characters and the cwd its transcripts record; another deep path
+// that starts the same isn't taken for it.
 func TestLongFolderFoundByItsStart(t *testing.T) {
 	projects := t.TempDir()
-	path := "/" + strings.Repeat("long-name/", 30)
+	path := "/" + strings.Repeat("long-name/", 30) + "service-a"
+	sibling := "/" + strings.Repeat("long-name/", 30) + "service-b"
 	other := folderName(path)[:maxName] + "-bunhash"
-	if err := os.MkdirAll(filepath.Join(projects, other), 0o700); err != nil {
-		t.Fatal(err)
+	if folderName(sibling)[:maxName] != folderName(path)[:maxName] {
+		t.Fatal("the sibling's folder starts otherwise")
 	}
+	prompt := text("user", "u", "", "hi")
+	prompt["cwd"] = path
+	transcript(t, filepath.Join(projects, other), newUUID(), prompt)
 	if got, ok := findProjectDir(projects, path); !ok || filepath.Base(got) != other {
 		t.Errorf("findProjectDir = %q, %v", got, ok)
+	}
+	if got, ok := findProjectDir(projects, sibling); ok {
+		t.Errorf("findProjectDir(sibling) = %q", got)
 	}
 	// A short path's folder is its name exactly: /p doesn't find /p-q's.
 	if err := os.MkdirAll(filepath.Join(projects, "-p-q"), 0o700); err != nil {
@@ -102,11 +113,11 @@ func TestWorktreesFromGit(t *testing.T) {
 		}
 	}
 	for _, dir := range []string{main, wt} {
-		if got := worktrees(dir); !slices.Equal(got, []string{main, wt}) {
+		if got := worktrees(context.Background(), dir); !slices.Equal(got, []string{main, wt}) {
 			t.Errorf("worktrees(%s) = %q", dir, got)
 		}
 	}
-	if got := worktrees(t.TempDir()); len(got) != 0 {
+	if got := worktrees(context.Background(), t.TempDir()); len(got) != 0 {
 		t.Errorf("worktrees outside a repository = %q", got)
 	}
 }
@@ -133,13 +144,13 @@ func TestFindLooksInWorktrees(t *testing.T) {
 	id := newUUID()
 	writeLines(t, Store{ConfigDir: config}.ProjectDir(main), id, `{"type":"user"}`)
 
-	if path, err := (Store{ConfigDir: config}).find(id, other); err != nil || filepath.Dir(path) != (Store{ConfigDir: config}).ProjectDir(main) {
+	if path, err := (Store{ConfigDir: config}).find(id, other, anyWorktrees); err != nil || filepath.Dir(path) != (Store{ConfigDir: config}).ProjectDir(main) {
 		t.Errorf("find from the other worktree = %q, %v", path, err)
 	}
-	if _, err := (Store{ConfigDir: config}).find(newUUID(), other); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := (Store{ConfigDir: config}).find(newUUID(), other, anyWorktrees); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("find of a missing session = %v", err)
 	}
-	if path, err := (Store{ConfigDir: config}).find(id, ""); err != nil || filepath.Base(path) != id+".jsonl" {
+	if path, err := (Store{ConfigDir: config}).find(id, "", anyWorktrees); err != nil || filepath.Base(path) != id+".jsonl" {
 		t.Errorf("find anywhere = %q, %v", path, err)
 	}
 }
@@ -151,7 +162,7 @@ func TestFindSkipsEmptyTranscripts(t *testing.T) {
 	id := newUUID()
 	writeLines(t, Store{ConfigDir: config}.ProjectDir(a), id)
 	writeLines(t, Store{ConfigDir: config}.ProjectDir(b), id, `{"type":"user"}`)
-	if path, err := (Store{ConfigDir: config}).find(id, a); err != nil || filepath.Dir(path) != (Store{ConfigDir: config}).ProjectDir(b) {
+	if path, err := (Store{ConfigDir: config}).find(id, a, anyWorktrees); err != nil || filepath.Dir(path) != (Store{ConfigDir: config}).ProjectDir(b) {
 		t.Errorf("find = %q, %v; want the one with records", path, err)
 	}
 }
@@ -160,7 +171,7 @@ func TestFindSkipsEmptyTranscripts(t *testing.T) {
 func stubWorktrees(t *testing.T, repos map[string][]string) {
 	t.Helper()
 	old := worktrees
-	worktrees = func(dir string) []string { return repos[dir] }
+	worktrees = func(_ context.Context, dir string) []string { return repos[dir] }
 	t.Cleanup(func() { worktrees = old })
 }
 

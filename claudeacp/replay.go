@@ -29,7 +29,7 @@ import (
 // replayer is one replay of a session's history.
 type replayer struct {
 	s       *session
-	cwd     string                       // where the transcript was found
+	t       *sessions.Transcript         // the session's transcript; nil when it has none
 	agents  map[string]sessions.Subagent // subagents' transcripts, by the call that started each
 	calls   map[callKey]*tool            // calls shown, until their results
 	inputs  map[string]launch            // what the calls that start, message or stop a subagent said
@@ -58,8 +58,8 @@ type callKey struct{ stream, id string }
 
 // replay sends the client the session's history, ms, found in cwd's
 // history folder ("" for any).
-func (s *session) replay(ms []sessions.Message, cwd string) {
-	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
+func (s *session) replay(ms []sessions.Message, t *sessions.Transcript) {
+	r := &replayer{s: s, t: t, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
 		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{},
 		queued: map[string][]queuedPrompt{}, said: map[string]bool{}, delivered: map[string]bool{}}
 	for _, m := range ms {

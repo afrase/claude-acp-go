@@ -40,11 +40,17 @@ type Queued struct {
 // absorbs it), which come last. An error matching fs.ErrNotExist says
 // the session isn't there.
 func (s Store) QueuedPrompts(id, cwd string) ([]Queued, error) {
-	path, err := s.find(id, cwd)
+	t, err := s.open(id, cwd)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	return t.QueuedPrompts()
+}
+
+// QueuedPrompts returns what claude queued in the session, as
+// Store.QueuedPrompts does.
+func (t *Transcript) QueuedPrompts() ([]Queued, error) {
+	data, err := os.ReadFile(t.path)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +73,15 @@ func (s Store) SubagentQueuedPrompts(id, cwd, agentID string) ([]Queued, error) 
 	a, err := s.subagent(id, cwd, agentID)
 	if err != nil {
 		return nil, err
+	}
+	return a.QueuedPrompts()
+}
+
+// QueuedPrompts returns what claude queued for the subagent and took into
+// its running turn, as Store.SubagentQueuedPrompts does.
+func (a Subagent) QueuedPrompts() ([]Queued, error) {
+	if a.path == "" {
+		return nil, notFound("subagent " + a.ID)
 	}
 	data, err := os.ReadFile(a.path)
 	if err != nil {

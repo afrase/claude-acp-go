@@ -41,6 +41,13 @@ const (
 // closes. An answer returned after that isn't sent: claude has gone on
 // without it. Otherwise ctx ends once the answer is written, so what must
 // reach claude after the answer goes in a context.AfterFunc of ctx.
+//
+// A hook fails open: when it returns an error, claude reports it and goes
+// ahead with what the event guards (the tool call, the prompt), unless
+// its HookMatcher's OnFailure is HookFailBlock; and when it misses its
+// deadline claude goes ahead in any case. To stop the action, return
+// Decision HookBlock, or for PreToolUse a "deny" permissionDecision in
+// Specific, never an error.
 type HookFunc func(ctx context.Context, in HookInput) (HookOutput, error)
 
 // HookMatcher is a hook and when it runs.
@@ -51,8 +58,20 @@ type HookMatcher struct {
 	// Timeout is how long claude waits for the hook; 0 = claude's
 	// default.
 	Timeout time.Duration
-	Fn      HookFunc
+	// OnFailure is what an error from Fn does; "" = claude's default,
+	// HookFailContinue. claude ignores it on Stop and SubagentStop.
+	OnFailure HookFailure
+	Fn        HookFunc
 }
+
+// HookFailure is what claude does when a hook returns an error.
+type HookFailure string
+
+// The hook failure policies.
+const (
+	HookFailContinue HookFailure = "continue" // report the error and go ahead
+	HookFailBlock    HookFailure = "block"    // block what the event guards, as HookBlock would
+)
 
 // HookInput is what claude tells a hook. The fields past AgentType are
 // the tool events'; Raw has everything, the other events' fields among
@@ -108,9 +127,10 @@ func hookCallbackID(n int) string { return "hook_" + strconv.Itoa(n) }
 // hookRegistration is a HookMatcher as initialize registers it: by its
 // callback's id. Timeout is in seconds.
 type hookRegistration struct {
-	HookCallbackIDs []string `json:"hookCallbackIds"`
-	Matcher         string   `json:"matcher,omitempty"`
-	Timeout         float64  `json:"timeout,omitempty"`
+	HookCallbackIDs []string    `json:"hookCallbackIds"`
+	Matcher         string      `json:"matcher,omitempty"`
+	Timeout         float64     `json:"timeout,omitempty"`
+	OnFailure       HookFailure `json:"onFailure,omitempty"`
 }
 
 // registerHooks is initialize's hooks field for hooks, and the hooks by
@@ -127,7 +147,7 @@ func registerHooks(hooks map[HookEvent][]HookMatcher) (map[HookEvent][]hookRegis
 			id := hookCallbackID(len(byID))
 			byID[id] = m.Fn
 			wire[event] = append(wire[event], hookRegistration{
-				HookCallbackIDs: []string{id}, Matcher: m.Matcher, Timeout: max(m.Timeout, 0).Seconds(),
+				HookCallbackIDs: []string{id}, Matcher: m.Matcher, Timeout: max(m.Timeout, 0).Seconds(), OnFailure: m.OnFailure,
 			})
 		}
 	}

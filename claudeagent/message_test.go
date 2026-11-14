@@ -209,3 +209,24 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// Decode's messages keep their own copy of the line, so a reused buffer,
+// such as a bufio.Scanner's, can't change them afterwards.
+func TestDecodeCopiesTheLine(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"assistant","message":{"content":[]},"uuid":"u1","session_id":"s1"}`,
+		`{"type":"brand_new","uuid":"u2"}`,
+	} {
+		buf := []byte(line)
+		m, err := Decode(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range buf {
+			buf[i] = ' '
+		}
+		if got := string(m.Frame().Raw); got != line {
+			t.Errorf("Raw after the buffer was reused = %q, want %q", got, line)
+		}
+	}
+}

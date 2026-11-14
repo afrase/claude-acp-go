@@ -57,7 +57,9 @@ func notFound(what string) error {
 // Its methods that read or change one session take the session's id, then
 // the working directory to look from: its project folder first, then its
 // git repository's other worktrees' (the CLI resumes a session from any of
-// them); "" looks in every project folder.
+// them); "" looks in every project folder. Each looks for the session
+// afresh, running git to list the worktrees; to read several things of
+// one session, Open it once and read them from the Transcript.
 type Store struct {
 	// ConfigDir is the CLI's config folder; "" is $CLAUDE_CONFIG_DIR, else
 	// ~/.claude.
@@ -90,7 +92,7 @@ func (s Store) projects() (string, error) {
 // standard library has no NFC), so a path spelled with decomposed accents
 // gets another name. The CLI's own builds may hash a long path otherwise
 // (the Python SDK says Bun's hash); reads here then find the folder by its
-// first 200 characters.
+// first 200 characters and the working directory its transcripts record.
 func (s Store) ProjectDir(cwd string) string {
 	projects, err := s.projects()
 	if err != nil {
@@ -133,9 +135,9 @@ func folderName(path string) string {
 	return string(b[:maxName]) + "-" + strconv.FormatInt(h, 36)
 }
 
-// findProjectDir returns path's project folder in projects. A long path's
-// folder is also found by its first 200 characters, since the CLI's hash
-// can differ from folderName's.
+// findProjectDir returns path's project folder in projects: the one
+// folderName names, else, for a long path, one under another hash (see
+// longMatch).
 func findProjectDir(projects, path string) (string, bool) {
 	name := folderName(path)
 	if fi, err := os.Stat(filepath.Join(projects, name)); err == nil && fi.IsDir() {
@@ -145,11 +147,37 @@ func findProjectDir(projects, path string) (string, bool) {
 		return "", false
 	}
 	for _, dir := range subdirs(projects) {
-		if strings.HasPrefix(dir, name[:maxName]+"-") {
+		if longMatch(projects, dir, path, name) {
 			return filepath.Join(projects, dir), true
 		}
 	}
 	return "", false
+}
+
+// longMatch says folder, in projects, is the long path's (named name by
+// folderName) under the hash of another CLI build: cut at the same 200
+// characters, and its transcripts recorded in path. The cut alone isn't
+// enough: two deep paths can share their first 200 characters.
+func longMatch(projects, folder, path, name string) bool {
+	return len(name) > maxName && strings.HasPrefix(folder, name[:maxName]+"-") &&
+		recordedCwd(filepath.Join(projects, folder)) == path
+}
+
+// recordedCwd is the working directory the transcripts in dir record, the
+// first that says one; "" when none does.
+func recordedCwd(dir string) string {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") || !e.Type().IsRegular() {
+			continue
+		}
+		if l, ok := readLite(filepath.Join(dir, e.Name())); ok {
+			if cwd := firstString(l.head, "cwd"); cwd != "" {
+				return cwd
+			}
+		}
+	}
+	return ""
 }
 
 // subdirs lists the folders in dir by name; none when it can't be read.
@@ -164,12 +192,20 @@ func subdirs(dir string) []string {
 	return out
 }
 
+// lister lists the worktrees of the git repository a folder is in.
+type lister func(dir string) []string
+
+// anyWorktrees is the lister of the Store methods that take no context:
+// git runs to its end, 5 s at most. A caller with a context uses Open.
+var anyWorktrees lister = func(dir string) []string { return worktrees(context.Background(), dir) }
+
 // worktrees lists the worktrees of the git repository dir is in, the main
 // one first; none outside a repository or without git. A session started in
 // one worktree is found from another, as the CLI's own resume does. It is a
-// variable so tests can stand in for git.
-var worktrees = func(dir string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// variable so tests can stand in for git. ctx ends the git it runs, which
+// has 5 s at most.
+var worktrees = func(ctx context.Context, dir string) []string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Listing runs no hook or filter; fsmonitor is off so the repository's
 	// config can't start a program either.
@@ -195,8 +231,8 @@ func parseWorktrees(out string) []string {
 
 // candidates returns the project folders where a session of cwd may be, in
 // the order to look: cwd's own, then its repository's other worktrees'; with
-// no cwd, every project folder.
-func candidates(projects, cwd string) []string {
+// no cwd, every project folder. list lists the worktrees.
+func candidates(projects, cwd string, list lister) []string {
 	if cwd == "" {
 		dirs := subdirs(projects)
 		for i, d := range dirs {
@@ -209,7 +245,7 @@ func candidates(projects, cwd string) []string {
 	if pd, ok := findProjectDir(projects, dir); ok {
 		out = append(out, pd)
 	}
-	for _, wt := range worktrees(dir) {
+	for _, wt := range list(dir) {
 		if wt == dir {
 			continue
 		}
@@ -223,7 +259,7 @@ func candidates(projects, cwd string) []string {
 // find returns the path of session id's transcript, looking where
 // candidates says. Only a file with something in it counts, as the CLI
 // writes an empty one in some folders.
-func (s Store) find(id, cwd string) (string, error) {
+func (s Store) find(id, cwd string, list lister) (string, error) {
 	if err := checkID(id); err != nil {
 		return "", err
 	}
@@ -231,7 +267,7 @@ func (s Store) find(id, cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, dir := range candidates(projects, cwd) {
+	for _, dir := range candidates(projects, cwd, list) {
 		path := filepath.Join(dir, id+".jsonl")
 		if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
 			return path, nil

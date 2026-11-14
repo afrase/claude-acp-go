@@ -37,7 +37,9 @@ func TestRequests(t *testing.T) {
 		{"stop_task", `{}`, `{"subtype":"stop_task","task_id":"t1"}`, `{}`,
 			func(s *claudeagent.Session) (any, error) { return nil, s.StopTask(ctx, "t1") }, ""},
 		{"cancel_async_message", `{}`, `{"subtype":"cancel_async_message","message_uuid":"u1"}`, `{"cancelled":true}`,
-			func(s *claudeagent.Session) (any, error) { return nil, s.CancelAsyncMessage(ctx, "u1") }, ""},
+			func(s *claudeagent.Session) (any, error) { return s.CancelAsyncMessage(ctx, "u1") }, "true"},
+		{"cancel_async_message too late", `{}`, `{"subtype":"cancel_async_message","message_uuid":"u1"}`, `{"cancelled":false}`,
+			func(s *claudeagent.Session) (any, error) { return s.CancelAsyncMessage(ctx, "u1") }, "false"},
 		{"mcp_toggle", `{}`, `{"subtype":"mcp_toggle","serverName":"jira","enabled":false}`, `{}`,
 			func(s *claudeagent.Session) (any, error) { return nil, s.MCPToggle(ctx, "jira", false) }, ""},
 		{"mcp_reconnect", `{}`, `{"subtype":"mcp_reconnect","serverName":"jira"}`, `{}`,
@@ -47,11 +49,11 @@ func TestRequests(t *testing.T) {
 				st, err := s.MCPServers(ctx)
 				return []string{st[0].Name, st[0].Status, st[0].Error, string(st[0].Raw)}, err
 			}, `["jira","failed","401","{\"name\":\"jira\",\"status\":\"failed\",\"error\":\"401\",\"tools\":[]}"]`},
-		{"get_context_usage", `{}`, `{"subtype":"get_context_usage","detail":"summary"}`, `{"categories":[{"name":"Messages","tokens":5}],"totalTokens":5,"rawMaxTokens":1000000}`,
+		{"get_context_usage", `{}`, `{"subtype":"get_context_usage","detail":"summary"}`, `{"categories":[{"name":"Messages","tokens":5,"kind":"used"},{"name":"Free space","tokens":9,"kind":"free"}],"totalTokens":5,"rawMaxTokens":1000000}`,
 			func(s *claudeagent.Session) (any, error) {
 				u, err := s.ContextUsage(ctx, "summary")
-				return []any{u.Categories[0].Name, u.TotalTokens, u.RawMaxTokens, len(u.Raw) > 0}, err
-			}, `["Messages",5,1000000,true]`},
+				return []any{u.Categories[0].Name, u.Categories[0].Kind, u.Categories[1].Kind, u.TotalTokens, u.RawMaxTokens, len(u.Raw) > 0}, err
+			}, `["Messages","used","free",5,1000000,true]`},
 		{"rewind_files", `{}`, `{"subtype":"rewind_files","user_message_id":"u1","dry_run":true}`, `{"canRewind":true,"filesChanged":["a.go"],"insertions":2}`,
 			func(s *claudeagent.Session) (any, error) {
 				r, err := s.RewindFiles(ctx, "u1", true)

@@ -1,3 +1,5 @@
+//go:build unix
+
 package main
 
 import (
@@ -253,5 +255,35 @@ func TestRecordTimeInOrder(t *testing.T) {
 			t.Errorf("time went back:\n%s", out.String())
 		}
 		last = f.MS
+	}
+}
+
+// claude gets the secrets; the cassette gets their names only.
+func TestRecordRedacts(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "cli.jsonl")
+	cmd := teeCmd(t, out, "--input-format=stream-json", "--mcp-config", `{"mcpServers":{"gh":{"command":"x","env":{"GH_TOKEN":"ghp_secret1"},"args":["--token=secret4"]},"z":{"type":"http","url":"https://mcp.example.com/mcp?key=secret5"}}}`,
+		`--settings={"env":{"ANTHROPIC_API_KEY":"sk-secret2"}}`)
+	cmd.Stdin = strings.NewReader(`{"type":"control_request","request_id":"1","request":{"subtype":"mcp_set_servers","servers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"Bearer secret3"}}}}}` + "\n")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "secret3") {
+		t.Errorf("claude didn't get the frame as sent: %s", stdout.String())
+	}
+	c, raw := readCassette(t, out)
+	for _, s := range []string{"ghp_secret1", "sk-secret2", "secret3", "secret4", "secret5"} {
+		if strings.Contains(raw, s) {
+			t.Errorf("the cassette has %s:\n%s", s, raw)
+		}
+	}
+	for _, s := range []string{"GH_TOKEN", "ANTHROPIC_API_KEY", "Authorization", "mcp_set_servers"} {
+		if !strings.Contains(raw, s) {
+			t.Errorf("the cassette lost %s:\n%s", s, raw)
+		}
+	}
+	if len(c.Frames) < 2 {
+		t.Errorf("%d frames", len(c.Frames))
 	}
 }

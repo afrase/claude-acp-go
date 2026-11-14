@@ -43,27 +43,48 @@ type transport struct {
 	tail        tail
 	errorResult atomic.Pointer[string] // the last result's text, if it was an error
 
-	wmu         sync.Mutex
+	// wslot is the write slot: one writer at a time. A channel, not a
+	// mutex, so a writer waiting behind one stuck on a full pipe gives up
+	// as its ctx says.
+	wslot       chan struct{}
 	inputClosed atomic.Bool
-	closeOnce   sync.Once
+
+	removeConfig func() // removes the MCP config file, once; nil without one
+	closeOnce    sync.Once
 }
 
 // startTransport starts claude for o.
 func startTransport(ctx context.Context, o Options) (*transport, error) {
-	s, err := spec(o)
+	config, remove, err := writeMCPConfig(o.MCPServers)
 	if err != nil {
+		return nil, err
+	}
+	s, err := spec(o, config)
+	if err != nil {
+		remove()
 		return nil, err
 	}
 	spawn := o.Spawner
 	if spawn == nil {
 		spawn = Exec
-		go logVersion(context.WithoutCancel(ctx), s, o.Log)
 	}
 	p, err := spawn(ctx, s)
 	if err != nil {
+		remove()
 		return nil, err
 	}
-	return newTransport(p, o), nil
+	t := makeTransport(p, o)
+	t.removeConfig = sync.OnceFunc(remove)
+	t.start(o.MaxLine)
+	return t, nil
+}
+
+// configRead says claude has read the files it was started with (it
+// answered initialize, or ended): they are removed.
+func (t *transport) configRead() {
+	if t.removeConfig != nil {
+		t.removeConfig()
+	}
 }
 
 // newTransport reads p's stdout and stderr and waits for it.
@@ -80,7 +101,7 @@ func makeTransport(p *Proc, o Options) *transport {
 		log: o.Log, stderr: o.Stderr, after: time.After, idle: time.After,
 		msgs: make(chan Message), closing: make(chan struct{}),
 		stdoutDone: make(chan struct{}), stderrDone: make(chan struct{}),
-		exited: make(chan struct{}), done: make(chan struct{}),
+		exited: make(chan struct{}), done: make(chan struct{}), wslot: make(chan struct{}, 1),
 	}
 	if t.log == nil {
 		t.log = slog.New(slog.DiscardHandler)
@@ -105,6 +126,7 @@ func (t *transport) messages() <-chan Message { return t.msgs }
 func (t *transport) readStdout(maxLine int) {
 	defer close(t.stdoutDone)
 	defer close(t.msgs)
+	defer func() { _ = t.stdout.Close() }() // its descriptor, now: not at GC; giveUp's may come first
 	lines := newLineReader(t.stdout, maxLine)
 	for {
 		line, over, err := lines.next()
@@ -140,7 +162,7 @@ func (t *transport) message(line []byte, over int) Message {
 		t.log.Debug("claude wrote a line that isn't a message", "size", len(line))
 		return nil
 	}
-	m, err := Decode(line)
+	m, err := decode(line) // a fresh slice per line: Raw keeps it
 	if err != nil {
 		t.log.Warn("claude wrote a message that doesn't decode", "size", len(line), "err", err)
 		return nil
@@ -161,6 +183,7 @@ func (t *transport) message(line []byte, over int) Message {
 
 func (t *transport) readStderr() {
 	defer close(t.stderrDone)
+	defer func() { _ = t.errOut.Close() }()
 	lines := newLineReader(t.errOut, 1<<20)
 	for {
 		line, over, err := lines.next()
@@ -187,6 +210,7 @@ func (t *transport) readStderr() {
 // after a second.
 func (t *transport) waitExit() {
 	t.exitErr = t.proc.Wait()
+	_ = t.closeInput() // nothing reads it now
 	close(t.exited)
 	t.giveUp(t.errOut, 200*time.Millisecond, t.stderrDone, "stderr")
 	close(t.done)
@@ -228,15 +252,26 @@ func (w *watched) Read(p []byte) (int, error) {
 }
 
 // write writes v to claude's stdin as one JSON line. Only marshalled
-// values are written: claude exits on a stdin line that isn't JSON.
-func (t *transport) write(v any) error {
+// values are written: claude exits on a stdin line that isn't JSON. ctx
+// bounds the wait for another write to finish; a write under way can't
+// be stopped but by closing the pipe (closeInput).
+func (t *transport) write(ctx context.Context, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("claudeagent: encoding a message: %w", err)
 	}
 	b = append(b, '\n')
-	t.wmu.Lock()
-	defer t.wmu.Unlock()
+	select {
+	case t.wslot <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.closing:
+		return ErrClosed
+	}
+	defer func() { <-t.wslot }()
+	if err := ctx.Err(); err != nil { // it may have ended as the slot came free
+		return err
+	}
 	if t.inputClosed.Load() {
 		return ErrClosed
 	}
@@ -244,7 +279,10 @@ func (t *transport) write(v any) error {
 		if t.inputClosed.Load() {
 			return ErrClosed
 		}
-		return fmt.Errorf("claudeagent: writing to claude: %w", err)
+		// A pipe to claude fails once claude has gone (EPIPE, or a
+		// closed pipe), and nothing more can reach it: the session is
+		// closed, and Wait says how claude ended.
+		return fmt.Errorf("%w: writing to claude: %w", ErrClosed, err)
 	}
 	return nil
 }
@@ -266,6 +304,7 @@ func (t *transport) closeInput() error {
 func (t *transport) close() {
 	t.closeOnce.Do(func() {
 		close(t.closing)
+		t.configRead()
 		_ = t.closeInput()
 		for _, step := range []struct {
 			after time.Duration

@@ -36,17 +36,22 @@ type ForkOptions struct {
 
 // Fork copies session id's conversation into a new session and returns
 // its id. Every record gets a fresh uuid, its links follow, and each
-// carries forkedFrom with the record it was copied from. Subagents'
-// records and progress records stay behind, as do the session's file
-// history snapshots, so the fork can't undo file changes made before it.
-// The fork ends with a custom-title record.
+// carries forkedFrom with the record it was copied from. The fork ends
+// with a custom-title record.
+//
+// What stays behind: subagents' records and progress records in the
+// transcript; the session's file history snapshots, so the fork can't
+// undo file changes made before it; and the subagents' own transcripts
+// (the <id>/subagents folder). The fork keeps the Agent tool calls and
+// their results, but Subagents finds none for it, so a replay of the fork
+// shows those calls without the subagents' messages.
 func (s Store) Fork(id, cwd string, o ForkOptions) (string, error) {
 	if o.UpTo != "" {
 		if err := checkID(o.UpTo); err != nil {
 			return "", err
 		}
 	}
-	path, err := s.find(id, cwd)
+	path, err := s.find(id, cwd, anyWorktrees)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +60,11 @@ func (s Store) Fork(id, cwd string, o ForkOptions) (string, error) {
 		return "", err
 	}
 	records, replacements := parseFork(data, id)
-	newID, lines, err := forkLines(records, replacements, id, o.UpTo)
+	newCwd := ""
+	if o.Cwd != "" {
+		newCwd = canonical(o.Cwd)
+	}
+	newID, lines, err := forkLines(records, replacements, id, o.UpTo, newCwd)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +146,9 @@ func parseFork(data []byte, id string) (records []copied, replacements []json.Ra
 }
 
 // forkLines turns records into the fork's lines, up to the record upTo.
-func forkLines(records []copied, replacements []json.RawMessage, id, upTo string) (string, []string, error) {
+// A record's cwd becomes cwd, when given: the fork is the new folder's,
+// and List and claude's resume read a session's folder from it.
+func forkLines(records []copied, replacements []json.RawMessage, id, upTo, cwd string) (string, []string, error) {
 	kept, found := cut(records, upTo)
 	if upTo != "" && !found {
 		return "", nil, fmt.Errorf("sessions: message %s isn't in session %s", upTo, id)
@@ -159,23 +170,8 @@ func forkLines(records []copied, replacements []json.RawMessage, id, upTo string
 	var lines []string
 	for i, r := range writable {
 		old, o := r.UUID.val, r.obj
-		// The nearest record above that isn't progress.
-		var parent *string
-		pid := string(r.Parent)
-		for range kept { // as many steps as records: a cycle ends
-			p, ok := byUUID[pid]
-			if !ok {
-				break
-			}
-			if p.Type != "progress" {
-				u := fresh[pid]
-				parent = &u
-				break
-			}
-			pid = string(p.Parent)
-		}
 		o.set("uuid", fresh[old])
-		o.set("parentUuid", parent)
+		o.set("parentUuid", forkParent(r, byUUID, fresh, len(kept)))
 		// A compaction's link to what it replaced follows when that was
 		// copied; otherwise it is null.
 		if l := r.Logical; !l.present || l.set {
@@ -191,6 +187,9 @@ func forkLines(records []copied, replacements []json.RawMessage, id, upTo string
 			o.set("timestamp", now)
 		}
 		o.set("isSidechain", false)
+		if cwd != "" && o.has("cwd") {
+			o.set("cwd", cwd)
+		}
 		o.set("forkedFrom", forkedFrom{SessionID: id, MessageUUID: old})
 		for _, k := range []string{"teamName", "agentName", "slug", "sourceToolAssistantUUID"} {
 			o.remove(k)
@@ -203,6 +202,24 @@ func forkLines(records []copied, replacements []json.RawMessage, id, upTo string
 		})))
 	}
 	return newID, lines, nil
+}
+
+// forkParent is the fork's uuid of the nearest record above r that isn't
+// progress, or nil; it takes at most steps steps, so a cycle ends.
+func forkParent(r copied, byUUID map[string]copied, fresh map[string]string, steps int) *string {
+	pid := string(r.Parent)
+	for range steps {
+		p, ok := byUUID[pid]
+		if !ok {
+			return nil
+		}
+		if p.Type != "progress" {
+			u := fresh[pid]
+			return &u
+		}
+		pid = string(p.Parent)
+	}
+	return nil
 }
 
 // cut returns the main conversation's records (not subagents') up to the
@@ -264,7 +281,7 @@ func (s Store) Delete(id, cwd string) error {
 	// Every folder, not just the first with the transcript: the CLI leaves
 	// empty transcripts in some, and one ahead of the real one must not
 	// keep it.
-	for _, dir := range candidates(projects, cwd) {
+	for _, dir := range candidates(projects, cwd, anyWorktrees) {
 		path := filepath.Join(dir, id)
 		if err := os.Remove(path + ".jsonl"); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

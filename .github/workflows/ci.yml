@@ -49,3 +49,4 @@ jobs:
             tools/lint/go.sum
       - run: make lint
       - run: make vuln
+      - run: make cross

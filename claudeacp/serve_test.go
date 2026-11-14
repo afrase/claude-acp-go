@@ -86,10 +86,9 @@ func TestNewSession(t *testing.T) {
 			t.Errorf("no %s in %q", want, sp.Args)
 		}
 	}
-	i := slices.Index(sp.Args, "--mcp-config")
 	var mcp struct{ MCPServers map[string]map[string]any }
-	if i < 0 || json.Unmarshal([]byte(sp.Args[i+1]), &mcp) != nil {
-		t.Fatalf("%q", sp.Args)
+	if !slices.Contains(sp.Args, "--mcp-config") || json.Unmarshal(f.MCPConfig(), &mcp) != nil {
+		t.Fatalf("%q %s", sp.Args, f.MCPConfig())
 	}
 	if got := mcp.MCPServers; got["tools"]["command"] != "/bin/tools" || got["web"]["type"] != "http" ||
 		got["web"]["headers"].(map[string]any)["H"] != "1" || got["kept"]["url"] != "https://kept" {

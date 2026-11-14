@@ -45,7 +45,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
@@ -95,7 +94,7 @@ func tee(args []string) int {
 		return 1
 	}
 	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(sigs, forwarded...)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "claude-tee:", err)
 		return 1
@@ -115,14 +114,8 @@ func tee(args []string) int {
 	if err := c.failed(); err != nil {
 		fmt.Fprintln(os.Stderr, "claude-tee: the cassette:", err)
 	}
-	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			_ = f.Close()
-			signal.Reset(ws.Signal())
-			_ = syscall.Kill(os.Getpid(), ws.Signal()) // ends as claude did
-			time.Sleep(time.Second)                    // the signal comes on a thread of its own; this is only the fallback
-			return 128 + int(ws.Signal())
-		}
+	if code, ok := endAsClaude(err, f); ok {
+		return code
 	}
 	return exitCode(err)
 }

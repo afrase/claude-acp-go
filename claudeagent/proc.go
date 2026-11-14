@@ -23,8 +23,8 @@ type Spec struct {
 }
 
 // Proc is a started claude: its pipes, and the Process to wait for and
-// signal. Stdout and Stderr are read until they end, and closed early
-// only to give up on them.
+// signal. Stdout and Stderr are read until they end, then closed (early,
+// to give up on them); Stdin is closed by Close, or once claude exits.
 type Proc struct {
 	Stdin  io.WriteCloser
 	Stdout io.ReadCloser

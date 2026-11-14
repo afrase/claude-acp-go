@@ -204,10 +204,12 @@ func TestResumeClaudeQuits(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		gone bool // the transcript is removed while claude starts
+		code int  // claude's exit code
 		want acp.ErrorCode
 	}{
-		{"transcript there", false, acp.ErrorCodeInternalError},
-		{"transcript gone", true, acp.ErrorCodeResourceNotFound},
+		{"transcript there", false, 1, acp.ErrorCodeInternalError},
+		{"transcript gone", true, 1, acp.ErrorCodeResourceNotFound},
+		{"transcript gone, claude exits with 0", true, 0, acp.ErrorCodeResourceNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd, sid := t.TempDir(), nthUUID(1)
@@ -218,7 +220,7 @@ func TestResumeClaudeQuits(t *testing.T) {
 						_ = os.Remove(path)
 					}
 				}),
-				claudetest.Exit(1, "Error: settings.json: unexpected token\n"))
+				claudetest.Exit(tc.code, "Error: settings.json: unexpected token\n"))
 			p := start(t, nil, quits)
 			p.writeHistory(t, cwd, sid, userRec("u1", "hello"))
 			path = filepath.Join(sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.ProjectDir(cwd), sid+".jsonl")

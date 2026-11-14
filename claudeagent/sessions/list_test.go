@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -288,9 +287,7 @@ func TestReadInfo(t *testing.T) {
 		t.Errorf("List = %+v", got)
 	}
 	pipe := filepath.Join(dir, newUUID()+".jsonl")
-	if err := syscall.Mkfifo(pipe, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mkfifo(t, pipe)
 	if got := mustList(t, config, ""); len(got) != 1 {
 		t.Errorf("List with a pipe = %+v", got)
 	}

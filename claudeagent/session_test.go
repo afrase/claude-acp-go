@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"os"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -132,6 +136,19 @@ func TestStartWithoutAccount(t *testing.T) {
 	}
 }
 
+// claude's version is logged from its answer to initialize: no second
+// claude runs to ask it.
+func TestStartLogsVersion(t *testing.T) {
+	var log syncBuffer
+	s, f := startWith(t, claudeagent.Options{Log: slog.New(slog.NewTextHandler(&log, nil))},
+		`{"claude_code_version":"2.1.400","account":{"subscriptionType":"max"}}`)
+	got := log.String()
+	finish(t, s, f)
+	if !strings.Contains(got, `level=INFO msg=claude version=2.1.400`) {
+		t.Errorf("no version logged:\n%s", got)
+	}
+}
+
 // syncBuffer is a log the session's goroutines write and a test reads.
 type syncBuffer struct {
 	mu sync.Mutex
@@ -218,14 +235,17 @@ func TestCloseBeforeExit(t *testing.T) {
 // how it ended; an error answer fails it with claude's reason.
 func TestStartFails(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		steps []claudetest.Step
-		want  string
+		name   string
+		steps  []claudetest.Step
+		want   string
+		exited bool // ErrExitedBeforeInit
 	}{
 		{"exits", []claudetest.Step{claudetest.Expect(initRequest), claudetest.Exit(1, "No conversation found with session ID: s1\n")},
-			"claude ended before answering initialize: claude exited with code 1: No conversation found with session ID: s1"},
+			"claude ended before answering initialize: claude exited with code 1: No conversation found with session ID: s1", true},
+		{"exits with 0", []claudetest.Step{claudetest.Expect(initRequest), claudetest.Exit(0, "")},
+			"claude ended before answering initialize", true},
 		{"refuses", []claudetest.Step{claudetest.Expect(initRequest), claudetest.Send(`{"type":"control_response","response":{"subtype":"error","request_id":"$req","error":"bad hooks"}}`)},
-			"claude refused initialize: bad hooks"},
+			"claude refused initialize: bad hooks", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := claudetest.New(tc.steps...)
@@ -233,10 +253,73 @@ func TestStartFails(t *testing.T) {
 			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
 				t.Fatalf("%v", err)
 			}
+			if errors.Is(err, claudeagent.ErrExitedBeforeInit) != tc.exited {
+				t.Errorf("errors.Is(%v, ErrExitedBeforeInit) = %v", err, !tc.exited)
+			}
 			<-f.Exited()
 		})
 	}
 }
+
+// claude gets its MCP servers in a file it reads as it starts, which is
+// gone once Start returns.
+func TestStartMCPConfig(t *testing.T) {
+	s, f := start(t, claudeagent.Options{MCPServers: map[string]claudeagent.MCPServer{
+		"web": {Type: "http", URL: "https://x", Headers: map[string]string{"Authorization": "Bearer t"}},
+	}})
+	if got := string(f.MCPConfig()); got != `{"mcpServers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"Bearer t"}}}}` {
+		t.Errorf("claude read %s", got)
+	}
+	args := f.Spec().Args
+	if i := slices.Index(args, "--mcp-config"); i < 0 {
+		t.Errorf("%q", args)
+	} else if _, err := os.Stat(args[i+1]); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the config is still there: %v", err)
+	}
+	finish(t, s, f)
+}
+
+// Writing to a claude that has exited, before anyone closed the session,
+// is ErrClosed, not the pipe's own error.
+func TestWriteAfterClaudeExited(t *testing.T) {
+	s, f := start(t, claudeagent.Options{}, claudetest.Exit(1, "out of memory\n"))
+	<-f.Exited()
+	if _, err := s.Send(context.Background(), claudeagent.UserInput{Text: "hi"}); !errors.Is(err, claudeagent.ErrClosed) {
+		t.Errorf("Send: %v", err)
+	}
+	var ee *claudeagent.ExitError
+	if err := s.Wait(); !errors.As(err, &ee) || ee.Code != 1 {
+		t.Errorf("Wait: %v", err)
+	}
+}
+
+// A claude that exits before initialize can even be written still fails
+// the start with how it ended.
+func TestStartClaudeGoneBeforeInitialize(t *testing.T) {
+	spawn := func(context.Context, claudeagent.Spec) (*claudeagent.Proc, error) {
+		return &claudeagent.Proc{
+			Stdin: brokenPipe{}, Stdout: io.NopCloser(strings.NewReader("")), Stderr: io.NopCloser(strings.NewReader("fatal: bad flag\n")),
+			Process: exited{&claudeagent.ExitError{Code: 2}},
+		}, nil
+	}
+	_, err := claudeagent.Start(context.Background(), claudeagent.Options{Env: []string{}, Spawner: spawn})
+	var ee *claudeagent.ExitError
+	if !errors.Is(err, claudeagent.ErrExitedBeforeInit) || !errors.As(err, &ee) || ee.Code != 2 || ee.Stderr != "fatal: bad flag" {
+		t.Errorf("%v", err)
+	}
+}
+
+// brokenPipe is the stdin of a claude that has gone.
+type brokenPipe struct{}
+
+func (brokenPipe) Write([]byte) (int, error) { return 0, syscall.EPIPE }
+func (brokenPipe) Close() error              { return nil }
+
+// exited is a claude that has exited with err.
+type exited struct{ err error }
+
+func (e exited) Wait() error          { return e.err }
+func (exited) Signal(os.Signal) error { return os.ErrProcessDone }
 
 // Has is the union of initialize's capabilities and every system/init's,
 // and agrees with a system/init by the time it is read.

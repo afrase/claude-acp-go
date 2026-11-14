@@ -46,10 +46,15 @@ type Session struct {
 	out   chan Message
 }
 
+// ErrExitedBeforeInit is Start's error when claude ended before it
+// answered initialize; an *ExitError beside it says how, unless claude
+// exited with 0.
+var ErrExitedBeforeInit = errors.New("claudeagent: claude ended before answering initialize")
+
 // Start starts claude, sends it the initialize request and returns once
 // claude has answered it, which can take a while: MCP servers start
 // first. ctx bounds the start only. If claude exits before it answers,
-// the error says how, with an *ExitError.
+// the error is ErrExitedBeforeInit, with an *ExitError that says how.
 func Start(ctx context.Context, o Options) (*Session, error) {
 	body, err := initRequest(o.Init)
 	if err != nil {
@@ -66,15 +71,18 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	}
 	s := newSession(ctx, t, o, byID)
 	raw, err := s.request(ctx, body, false)
+	// claude reads its MCP config as it starts, before it reads stdin, so
+	// by its answer (or its end) the file has done its work.
+	t.configRead()
 	if err != nil {
 		_ = s.Close()
 		if !errors.Is(err, ErrClosed) {
 			return nil, err // claude's refusal, or ctx's end, which say initialize
 		}
 		if werr := s.Wait(); werr != nil {
-			return nil, fmt.Errorf("claudeagent: claude ended before answering initialize: %w", werr)
+			return nil, fmt.Errorf("%w: %w", ErrExitedBeforeInit, werr)
 		}
-		return nil, errors.New("claudeagent: claude ended before answering initialize")
+		return nil, ErrExitedBeforeInit
 	}
 	r := new(InitResponse)
 	if len(raw) > 0 && string(raw) != "null" {
@@ -85,6 +93,9 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	}
 	s.initResp = r
 	s.addCapabilities(r.Capabilities)
+	// For the log only: features are detected from what claude says it
+	// supports, never from its version.
+	s.log.Info("claude", "version", r.ClaudeCodeVersion)
 	if r.Account == (Account{}) {
 		// claude names the login it runs with; none may mean a claude that
 		// starts bare by default, without the user's login, settings,
@@ -235,8 +246,18 @@ func (s *Session) initWritten() bool {
 func (s *Session) initDone() { s.initOnce.Do(func() { close(s.initCh) }) }
 
 // write writes v to claude's stdin once initialize has been written:
-// claude takes its first line for the start of the session.
+// claude takes its first line for the start of the session. An ended ctx
+// or a closing session is checked first: select picks among ready cases
+// at random, and initCh is nearly always ready.
 func (s *Session) write(ctx context.Context, v any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-s.closing:
+		return ErrClosed
+	default:
+	}
 	select {
 	case <-s.initCh:
 	case <-ctx.Done():
@@ -244,7 +265,7 @@ func (s *Session) write(ctx context.Context, v any) error {
 	case <-s.closing:
 		return ErrClosed
 	}
-	return s.t.write(v)
+	return s.t.write(ctx, v)
 }
 
 // Close ends the session: callbacks' contexts end, requests waiting for

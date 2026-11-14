@@ -34,6 +34,7 @@ type Fake struct {
 	responded []string
 	spawned   bool
 	spec      claudeagent.Spec
+	mcpConfig json.RawMessage
 	signals   []os.Signal
 	err       error
 	exitErr   error
@@ -110,6 +111,13 @@ func (f *Fake) Spawn(ctx context.Context, s claudeagent.Spec) (*claudeagent.Proc
 		return nil, errors.New("claudetest: the fake was started twice")
 	}
 	f.spawned, f.spec = true, s
+	// claude reads its MCP config file as it starts; the file is gone
+	// once it has answered initialize.
+	if i := slices.Index(s.Args, "--mcp-config"); i >= 0 && i+1 < len(s.Args) {
+		if b, err := os.ReadFile(s.Args[i+1]); err == nil {
+			f.mcpConfig = b
+		}
+	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	errR, errW := io.Pipe()
@@ -154,6 +162,14 @@ func (f *Fake) Spec() claudeagent.Spec {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.spec
+}
+
+// MCPConfig is the MCP servers' config the fake was started with, read
+// from the file --mcp-config names as claude reads it; nil without one.
+func (f *Fake) MCPConfig() json.RawMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mcpConfig
 }
 
 // Signals are the signals the fake was sent, in order.

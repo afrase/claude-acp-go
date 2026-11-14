@@ -30,7 +30,8 @@ type PermissionRequest struct {
 	Raw                     json.RawMessage
 }
 
-// PermissionResult is the answer to a PermissionRequest: Allow or Deny.
+// PermissionResult is the answer to a PermissionRequest: Allow or Deny,
+// or a pointer to one.
 type PermissionResult interface{ permissionResult() }
 
 // Allow lets the tool run.
@@ -67,7 +68,11 @@ const (
 //   - UpdateSetMode: Mode;
 //   - UpdateAddDirectories, UpdateRemoveDirectories: Directories.
 //
-// Destination says where the change is kept.
+// Destination says where the change is kept; claude requires one, so an
+// Allow's update without it is sent with DestinationSession. claude
+// ignores an update it can't read, and lets the tool run without it, so
+// an Allow whose update of a type above lacks the fields that type uses
+// is refused instead (the tool doesn't run), as a mistake to see.
 type PermissionUpdate struct {
 	Type        PermissionUpdateType  `json:"type"`
 	Rules       []PermissionRule      `json:"rules,omitempty"`
@@ -201,6 +206,18 @@ type permissionReply struct {
 // tool call, an allow always carries the input (the asked one when
 // unchanged) and a deny always a message: claude checks all three.
 func permissionAnswer(r PermissionRequest, result PermissionResult) (permissionReply, error) {
+	// &Allow{} and &Deny{} satisfy the interface too, and returning a
+	// pointer is a habit worth honouring.
+	switch p := result.(type) {
+	case *Allow:
+		if p != nil {
+			result = *p
+		}
+	case *Deny:
+		if p != nil {
+			result = *p
+		}
+	}
 	switch p := result.(type) {
 	case Allow:
 		input := p.UpdatedInput
@@ -210,9 +227,13 @@ func permissionAnswer(r PermissionRequest, result PermissionResult) (permissionR
 		if input == nil {
 			input = json.RawMessage(`{}`)
 		}
+		updates, err := checkUpdates(p.UpdatedPermissions)
+		if err != nil {
+			return permissionReply{}, err
+		}
 		return permissionReply{
 			Behavior: BehaviorAllow, ToolUseID: r.ToolUseID, UpdatedInput: input,
-			UpdatedPermissions: p.UpdatedPermissions, DecisionClassification: p.Classification,
+			UpdatedPermissions: updates, DecisionClassification: p.Classification,
 		}, nil
 	case Deny:
 		return permissionReply{
@@ -221,6 +242,48 @@ func permissionAnswer(r PermissionRequest, result PermissionResult) (permissionR
 		}, nil
 	}
 	return permissionReply{}, errors.New("claudeagent: CanUseTool returned no Allow or Deny")
+}
+
+// checkUpdates is updates as claude reads them: claude's own (Raw) as
+// they came, the caller's with a Destination. One of a type the package
+// knows that lacks what the type uses is an error: claude would drop it
+// with no word to the caller.
+func checkUpdates(updates []PermissionUpdate) ([]PermissionUpdate, error) {
+	if updates == nil {
+		return nil, nil
+	}
+	out := make([]PermissionUpdate, len(updates))
+	for i, u := range updates {
+		out[i] = u
+		if len(u.Raw) > 0 {
+			continue
+		}
+		var missing string
+		switch u.Type {
+		case UpdateAddRules, UpdateReplaceRules, UpdateRemoveRules:
+			switch {
+			case len(u.Rules) == 0:
+				missing = "Rules"
+			case u.Behavior == "":
+				missing = "Behavior"
+			}
+		case UpdateSetMode:
+			if u.Mode == "" {
+				missing = "Mode"
+			}
+		case UpdateAddDirectories, UpdateRemoveDirectories:
+			if len(u.Directories) == 0 {
+				missing = "Directories"
+			}
+		}
+		if missing != "" {
+			return nil, fmt.Errorf("claudeagent: CanUseTool's Allow has a %s update with no %s", u.Type, missing)
+		}
+		if u.Destination == "" {
+			out[i].Destination = DestinationSession
+		}
+	}
+	return out, nil
 }
 
 // isSet says whether an optional flag is on: present, and not false,
