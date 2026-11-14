@@ -11,6 +11,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: an approved ExitPlanMode call keeps showing the plan, retitled `Exited Plan Mode`, and a Skill call keeps its content, where claude's result text for the model replaced them; a refused plan's reason is unfenced in `rawOutput`.
 - `claudeacp`: an Edit's or Write's diffs from claude's response say the line each hunk starts at; a Write over a file whose response has no hunks shows the old text against the new, or says the old was too large to diff, where it showed a new file being created.
 - `claudeacp`: each of claude's progress beats for a running tool goes to the client with `_meta.claudeCode.toolResponse` `{elapsedTimeSeconds, subagentType?, subagentRetry?}`, where only the first went, bare; a beat under an id of its own (a heartbeat, a subagent's retries) goes to its parent call. `claudeagent.ToolProgress` has `SubagentType` and `SubagentRetry`.
+- `claudeacp`: a tool's result that isn't its output says why under `_meta.claudeCode`, `nonExecutionKind` (`user-rejected`, `permission-rule`, `interrupted`, `cancelled`, `automode-…`) and `userFeedback`, from claude's `tool_result_meta`, as claude-agent-acp does. `claudeagent.User` has `ToolResultMeta`, as claude sent it.
 
 ## v0.3.1 (2026-11-14)
 

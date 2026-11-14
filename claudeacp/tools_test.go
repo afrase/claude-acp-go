@@ -397,3 +397,22 @@ func TestProgressOfParent(t *testing.T) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// A result that isn't the tool's output says why under
+// _meta.claudeCode, as claude's tool_result_meta says: the user refused
+// it, and what they said.
+func TestNonExecution(t *testing.T) {
+	f := fake(user("id2"), echo("id2"),
+		assistant(`{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"rm -rf x"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","is_error":true,"content":"The user doesn't want to proceed."}]},`+
+			`"tool_result_meta":[{"id":"toolu_b","non_execution_kind":"user-rejected","user_feedback":"use make instead"},{"id":"other"},7]}`),
+		result(names("id2")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := p.toolUpdates()
+	if want := `"_meta":{"claudeCode":{"nonExecutionKind":"user-rejected","toolName":"Bash","userFeedback":"use make instead"}}`; len(got) != 2 || !strings.Contains(got[1], want) {
+		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}

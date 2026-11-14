@@ -104,6 +104,7 @@ func (s *session) handle(m claudeagent.Message) {
 
 // user is a user message: tools' results, or the echo of a prompt.
 func (s *session) user(m *claudeagent.User) {
+	why := nonExecutions(m.ToolResultMeta)
 	for _, b := range m.Message.Content {
 		if b.Type != "tool_result" {
 			continue
@@ -113,7 +114,7 @@ func (s *session) user(m *claudeagent.User) {
 			structured = m.ToolUseResult
 		}
 		if !s.plan.result(b, structured) {
-			s.tools.result(b, structured)
+			s.tools.result(b, structured, why[b.ToolUseID])
 		}
 		s.resumed(b.ToolUseID, structured)
 	}
@@ -266,7 +267,7 @@ func (s *session) assistant(m *claudeagent.Assistant) {
 			case isToolUse(b.Type):
 				s.tools.input(key, b)
 			case strings.HasSuffix(b.Type, "_tool_result"): // a server tool's, which the API ran
-				s.tools.result(b, nil)
+				s.tools.result(b, nil, nonExecution{})
 			}
 		}
 	}

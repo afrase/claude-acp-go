@@ -134,8 +134,9 @@ func (ts *tools) callInput(id string) (in launch, stream string) {
 }
 
 // result is a tool's result: the call ends, completed or failed.
-// structured is the tool's own output, when claude gave it.
-func (ts *tools) result(b claudeagent.Block, structured json.RawMessage) {
+// structured is the tool's own output, when claude gave it, and why says
+// why the result isn't, when claude said.
+func (ts *tools) result(b claudeagent.Block, structured json.RawMessage, why nonExecution) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	t := ts.byID[b.ToolUseID]
@@ -143,7 +144,9 @@ func (ts *tools) result(b claudeagent.Block, structured json.RawMessage) {
 		return
 	}
 	t.ended = true
-	ts.sendLocked(t, resultReport(t.name, b, structured))
+	r := resultReport(t.name, b, structured)
+	r.why = why
+	ts.sendLocked(t, r)
 	ts.out.release(t.id) // its work, if it started a subagent claude never named
 }
 
@@ -192,6 +195,41 @@ func (ts *tools) denied(m *claudeagent.PermissionDenied) {
 		Message            string `json:"message"`
 	}{m.DecisionReasonType, m.DecisionReason, m.Message})
 	ts.sendLocked(t, report{status: acp.ToolCallStatusFailed, content: texts("Permission denied: " + reason), response: response})
+}
+
+// nonExecution is why a tool's result is claude's words, not the tool's
+// output, as claude-agent-acp says it under _meta.claudeCode: the call
+// never ran ("user-rejected", "permission-rule", "automode-…") or was
+// stopped ("interrupted", "cancelled"); and what the user said, refusing
+// it.
+type nonExecution struct {
+	Kind     string `json:"nonExecutionKind,omitempty"`
+	Feedback string `json:"userFeedback,omitempty"`
+}
+
+// nonExecutions reads a user message's tool_result_meta: why each
+// result it names isn't the tool's output, by the result's call id. An
+// entry that doesn't say is left out.
+func nonExecutions(raw json.RawMessage) map[string]nonExecution {
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		return nil
+	}
+	why := map[string]nonExecution{}
+	for _, e := range entries {
+		var m struct {
+			ID       string          `json:"id"`
+			Kind     string          `json:"non_execution_kind"`
+			Feedback json.RawMessage `json:"user_feedback"`
+		}
+		if json.Unmarshal(e, &m) != nil || m.ID == "" || m.Kind == "" {
+			continue
+		}
+		n := nonExecution{Kind: m.Kind}
+		_ = json.Unmarshal(m.Feedback, &n.Feedback) // only text is what the user said
+		why[m.ID] = n
+	}
+	return why
 }
 
 // callEnd is why the calls still open end.
