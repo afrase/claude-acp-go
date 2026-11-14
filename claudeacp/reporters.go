@@ -31,12 +31,20 @@ type view struct {
 type toolInput struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
-	FilePath    string `json:"file_path"`
-	Path        string `json:"path"`
-	Pattern     string `json:"pattern"`
-	Offset      int    `json:"offset"`
-	Limit       int    `json:"limit"`
-	Content     string `json:"content"`
+	// CommandDescription is Bash's description by another name, which
+	// claude takes since 2.1.295; the streamed tool use keeps the key the
+	// model wrote.
+	CommandDescription string `json:"command_description"`
+	FilePath           string `json:"file_path"`
+	Path               string `json:"path"`
+	Pattern            string `json:"pattern"`
+	Offset             int    `json:"offset"`
+	Limit              int    `json:"limit"`
+	Content            string `json:"content"`
+	// FileText and FileContent are Write's content by other names, which
+	// claude takes since 2.1.280.
+	FileText    string `json:"file_text"`
+	FileContent string `json:"file_content"`
 	OldString   string `json:"old_string"`
 	NewString   string `json:"new_string"`
 	URL         string `json:"url"`
@@ -63,8 +71,8 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 	switch name {
 	case "Bash", "PowerShell":
 		v := view{title: cmp.Or(in.Command, "Terminal"), kind: acp.ToolKindExecute}
-		if in.Description != "" {
-			v.content = []acp.ToolCallContent{textContent(in.Description)}
+		if d := cmp.Or(in.Description, in.CommandDescription); d != "" {
+			v.content = []acp.ToolCallContent{textContent(d)}
 		}
 		return v
 	case "Read":
@@ -82,7 +90,8 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 	case "Write":
 		v := view{title: titled("Write", rel(file, cwd)), kind: acp.ToolKindEdit, locations: at(file, nil)}
 		if file != "" {
-			v.content = []acp.ToolCallContent{{Diff: &acp.Diff{Path: file, NewText: in.Content}}}
+			text := cmp.Or(in.Content, in.FileText, in.FileContent)
+			v.content = []acp.ToolCallContent{{Diff: &acp.Diff{Path: file, NewText: text}}}
 		}
 		return v
 	case "Edit":

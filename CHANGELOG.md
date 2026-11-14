@@ -2,6 +2,10 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## Unreleased
+
+- `claudeacp`: a Write whose content claude took as `file_text` or `file_content`, and a Bash call whose description came as `command_description`, show that text, as claude-agent-acp shows it.
+
 ## v0.3.1 (2026-11-14)
 
 - Needs Go 1.27.4, which fixes GO-2026-6859 in `net/http`. `go install` then builds with the fixed standard library.
