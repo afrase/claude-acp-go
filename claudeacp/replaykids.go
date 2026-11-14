@@ -2,6 +2,7 @@ package claudeacp
 
 import (
 	"encoding/json"
+	"regexp"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -17,7 +18,8 @@ import (
 // task notification about it said (a user message, or a prompt claude
 // queued, in whichever transcript started it: findQueued); else stopped,
 // when the main agent
-// stopped it; else, for one in the foreground, how its call ended; else
+// stopped it; else, for one in the foreground, how its call ended (an
+// error that names a stop is cancelled, as live); else
 // idle with no reason, as nothing says (a background subagent that was
 // running when claude last exited).
 
@@ -26,7 +28,7 @@ import (
 type replayedKid struct {
 	sa         *subagent
 	background bool   // started in the background: its call's result says nothing of its end
-	launched   string // its first call's result: "ok", "failed", or "" with none
+	launched   string // its first call's result: "ok", "cancelled", "failed", or "" with none
 	failure    string // that result's text, when it failed
 	ended      string // the status of the last task notification about it
 	summary    string
@@ -107,8 +109,11 @@ func (r *replayer) called(t *tool, b claudeagent.Block, structured json.RawMessa
 	if kid := r.launchOf(t.id); kid != nil && kid.launched == "" {
 		kid.launched = "ok"
 		if b.IsError {
-			kid.launched = "failed"
 			kid.failure, _ = resultParts(b.Content)
+			kid.launched = "failed"
+			if stopWords.MatchString(kid.failure) {
+				kid.launched = "cancelled"
+			}
 		}
 		return
 	}
@@ -130,6 +135,11 @@ func (r *replayer) called(t *tool, b claudeagent.Block, structured json.RawMessa
 		}
 	}
 }
+
+// stopWords are what the error result of a foreground subagent's call
+// says when the user stopped it, as claude-agent-acp reads it: live,
+// claude reports that end stopped, which isn't in the transcript.
+var stopWords = regexp.MustCompile(`(?i)\b(?:cancelled|canceled|interrupted|stopped|killed)\b`)
 
 // launchOf is the subagent call started, if the replay announced it.
 func (r *replayer) launchOf(call string) *replayedKid {
@@ -205,6 +215,8 @@ func (r *replayer) ends() {
 			st, _ = endState("stopped", "")
 		case !kid.background && kid.launched == "ok":
 			st, _ = endState("completed", "")
+		case !kid.background && kid.launched == "cancelled":
+			st, _ = endState("stopped", "")
 		case !kid.background && kid.launched == "failed":
 			st, _ = endState("failed", kid.failure)
 		default:

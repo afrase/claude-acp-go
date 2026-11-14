@@ -102,7 +102,7 @@ func TestLoadReplaysSubagents(t *testing.T) {
 		ended("A", `{"state":"idle","stopReason":"end_turn"}`),
 		ended("B", `{"state":"idle","stopReason":"cancelled"}`),
 		ended("C", `{"state":"idle"}`),
-		ended("D", `{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"[Request interrupted by user for tool use]"}}`),
+		ended("D", `{"state":"idle","stopReason":"cancelled"}`),
 		ended("E", `{"state":"idle","stopReason":"cancelled"}`),
 		sid + " commands",
 	}
@@ -115,6 +115,48 @@ func TestLoadReplaysSubagents(t *testing.T) {
 	eventually(t, "stop_task", func() bool {
 		return slices.ContainsFunc(asked(f), func(l string) bool { return strings.Contains(l, `"agentC"`) })
 	})
+}
+
+// A foreground subagent's call that ended in an error ends it cancelled
+// when the error names a stop, as the user's stop of it was live (the
+// stop itself isn't in the transcript), else failed with the error.
+func TestLoadSubagentLaunchErrors(t *testing.T) {
+	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	errs := map[string]string{
+		"I": "[Request interrupted by user for tool use]",
+		"R": "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+		"K": "Agent was Killed",
+		"F": "API Error: overloaded",
+	}
+	recs := []rec{userRec("u1", "Go")}
+	for _, id := range []string{"I", "R", "K", "F"} {
+		recs = append(recs, asstRec("a"+id, "msg_"+id, useBlock("toolu_"+id, "Agent", `{"description":"`+id+`","prompt":"go"}`)),
+			userRec("r"+id, resultBlocks("toolu_"+id, errs[id], true)))
+		p.writeSubagent(t, cwd, sid, "agent"+id, "toolu_"+id, asstRec(id+"1", "msg_s"+id, textBlock("on it")))
+	}
+	p.writeHistory(t, cwd, sid, recs...)
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	var ends []string
+	for _, l := range p.replayed() {
+		if strings.Contains(l, `"state":{"state":"idle"`) {
+			ends = append(ends, l)
+		}
+	}
+	ended := func(id, state string) string {
+		return sid + " subagent " + `{"sessionId":"agent` + id + `","state":` + state + `}`
+	}
+	want := []string{
+		ended("I", `{"state":"idle","stopReason":"cancelled"}`),
+		ended("R", `{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"`+errs["R"]+`"}}`),
+		ended("K", `{"state":"idle","stopReason":"cancelled"}`),
+		ended("F", `{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"`+errs["F"]+`"}}`),
+	}
+	if !slices.Equal(ends, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(ends, "\n"), strings.Join(want, "\n"))
+	}
 }
 
 // A task notification claude took into a running turn is kept only as a

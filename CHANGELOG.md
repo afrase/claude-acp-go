@@ -9,6 +9,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: cancelling a subagent's session also withdraws what the foreground subagents under it ask, as claude stops them with it, so they no longer show running again before they end.
 - `claudeacp`: a subagent's tool call whose `tool_call` went on the session (held past the bounds before claude named the subagent) has its later updates go there too, not to the child, so it is no longer left pending on the session.
 - `claudeacp`: after `session/resume`, a SendMessage that resumes a subagent from before the restart finds, in the session's history, the call that first started it, which claude sends the run's work under: that work now goes to the subagent's session instead of being held and later sent on the session.
+- `claudeacp`: a load ends a foreground subagent whose call's error names a stop (interrupted, stopped, cancelled, killed) as cancelled, as the live session and claude-agent-acp have it, instead of failed with that error.
 
 ## v0.3.1 (2026-11-14)
 
