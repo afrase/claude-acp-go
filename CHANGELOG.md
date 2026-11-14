@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: a fast mode change claude refused says "Claude didn't change fast mode: …", where it said "the fast".
 - `claudeacp`: ExitPlanMode's answer is checked against the options the user was shown, not ones worked out again when the answer came: Auto mode picked on a model that lost it meanwhile starts the work accepting edits, where the approval became "The user cancelled."
 - `claudeacp`: what a subagent's stream was writing (its last message's text, its tool uses' inputs) is forgotten when the subagent ends, rather than kept until the session closes.
 - `claudeacp`: a delete, load, resume or fork of a session that is closing waits for its claude to exit: a delete removed the transcript while claude still wrote it (so the chat came back), and a load ran a second claude on it. A delete is also ordered against a load of the same session.
