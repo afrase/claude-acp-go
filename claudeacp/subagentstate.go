@@ -8,6 +8,7 @@ import (
 	acp "github.com/afrase/acp-go/unstable"
 
 	"github.com/afrase/claude-acp-go/claudeagent"
+	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
 // A subagent's state, as claude's task events and the agent's own
@@ -20,7 +21,28 @@ func (s *session) taskStarted(m *claudeagent.TaskStarted) {
 		return // a background command's
 	}
 	in, stream := s.tools.callInput(m.ToolUseID)
-	s.kids.started(m, in, stream)
+	var from sessions.Subagent
+	if in.To != "" && s.kids.children && !s.kids.known(m.TaskID) {
+		from = s.fromHistory(m.TaskID)
+	}
+	s.kids.started(m, in, stream, from)
+}
+
+// fromHistory is what the session's history keeps of its subagent id: a
+// SendMessage can resume one that ran before claude was restarted.
+func (s *session) fromHistory(id string) sessions.Subagent {
+	store := sessions.Store{ConfigDir: s.a.cfg.ConfigDir}
+	for _, dir := range []string{s.cwd, ""} {
+		list, err := store.Subagents(s.id, dir)
+		if err != nil {
+			continue
+		}
+		if i := slices.IndexFunc(list, func(a sessions.Subagent) bool { return a.ID == id }); i >= 0 {
+			return list[i]
+		}
+		return sessions.Subagent{}
+	}
+	return sessions.Subagent{}
 }
 
 // taskUpdated is a change to a task: a subagent backgrounded, running

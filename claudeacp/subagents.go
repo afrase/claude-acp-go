@@ -8,6 +8,7 @@ import (
 	acp "github.com/afrase/acp-go/unstable"
 
 	"github.com/afrase/claude-acp-go/claudeagent"
+	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
 // Subagents as sessions of their own (ACP's subagents RFD), for a client
@@ -203,6 +204,13 @@ func (k *subagents) stopsWith(agent, id string) bool {
 	return false
 }
 
+// known says the subagent id is known, run or replayed here.
+func (k *subagents) known(id string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.byID[id] != nil
+}
+
 // shownChild says the child session id is one of these subagents'.
 func (k *subagents) shownChild(id string) bool {
 	k.mu.Lock()
@@ -218,14 +226,18 @@ type launch struct {
 	SubagentType string `json:"subagent_type"`
 	Prompt       string `json:"prompt"`
 	Message      string `json:"message"` // a SendMessage's
+	To           string `json:"to"`      // a SendMessage's
 	Background   bool   `json:"run_in_background"`
 	TaskID       string `json:"task_id"` // a TaskStop's
 }
 
 // started is claude starting a subagent's task, for the call whose input
 // is in, of the stream stream. A new one is announced; one that ran
-// before runs again for the call that started it now.
-func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string) {
+// before runs again for the call that started it now. from is what the
+// session's history says of a subagent this process hasn't seen, which a
+// SendMessage resumes after a restart: claude sends that run's work
+// under the call that first started it.
+func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string, from sessions.Subagent) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if sa := k.byID[m.TaskID]; sa != nil {
@@ -242,7 +254,11 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 	if sa.call != "" {
 		k.byCall[sa.call] = sa
 	}
-	p := cmp.Or(k.byID[m.ParentTaskID], k.byCall[stream])
+	launched := from.ParentToolUseID
+	if launched != "" && k.byCall[launched] == nil {
+		k.byCall[launched] = sa
+	}
+	p := cmp.Or(k.byID[m.ParentTaskID], k.byID[from.ParentAgentID], k.byCall[stream])
 	if p != nil {
 		sa.parent = p.id
 	}
@@ -255,7 +271,10 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 		sa.on = p.id
 	}
 	k.announceLocked(sa, in, m.SubagentType, m.Description)
-	k.delegatedLocked(sa, sa.call, cmp.Or(in.Prompt, m.Prompt))
+	k.delegatedLocked(sa, sa.call, cmp.Or(in.Prompt, m.Prompt, in.Message))
+	if launched != "" && k.byCall[launched] == sa {
+		k.flushLocked(launched, sa.id)
+	}
 }
 
 // announceLocked tells the client of the subagent sa, on the session

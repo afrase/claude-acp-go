@@ -614,3 +614,45 @@ func TestSubagentStopsWith(t *testing.T) {
 		}
 	}
 }
+
+// After session/resume, a SendMessage can resume a subagent that ran
+// before claude was restarted: its history names the call that started
+// it, which claude sends the run's work under, so the work goes to the
+// subagent's session.
+func TestSubagentResumedAfterRestart(t *testing.T) {
+	f := fake(user("id1"), echo("id1"),
+		assistant(`{"type":"tool_use","id":"toolu_m","name":"SendMessage","input":{"to":"a1","message":"count again"}}`),
+		subagentCall("toolu_A", "toolu_2"),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"a1","run_id":"r2","tool_use_id":"toolu_m","task_type":"local_agent","prompt":"count again"}`),
+		sendf(`{"type":"user","parent_tool_use_id":"toolu_A","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"1"}]}}`),
+		sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","tool_use_id":"toolu_m","status":"completed"}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m","content":"sent"}]},`+
+			`"tool_use_result":{"success":true,"resumedAgentId":"a1"}}`),
+		result(names("id1")), claudetest.Send(idle))
+	p := start(t, withSubagents, f)
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "Count"),
+		asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count","run_in_background":true}`)),
+		userRec("r1", resultBlocks("toolu_A", "Async agent launched", false)))
+	p.writeSubagent(t, cwd, sid, "a1", "toolu_A", userRec("s1", "count"), asstRec("s2", "msg_A1", textBlock("1")))
+	if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := shape(p.notes(), acp.SessionID(sid))
+	want := []string{
+		"s1 call toolu_m SendMessage pending",
+		`s1 subagent {"sessionId":"a1","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
+		"a1 message toolu_m to a1",
+		"a1 call toolu_2 Bash pending parent=toolu_A",
+		"a1 update toolu_2 completed parent=toolu_A",
+		`s1 subagent {"sessionId":"a1","state":{"state":"idle","stopReason":"end_turn"}}`,
+		"s1 update toolu_m completed",
+		"s1 usage human",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
