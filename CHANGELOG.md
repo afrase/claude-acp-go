@@ -11,6 +11,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: after `session/resume`, a SendMessage that resumes a subagent from before the restart finds, in the session's history, the call that first started it, which claude sends the run's work under: that work now goes to the subagent's session instead of being held and later sent on the session.
 - `claudeacp`: a load ends a foreground subagent whose call's error names a stop (interrupted, stopped, cancelled, killed) as cancelled, as the live session and claude-agent-acp have it, instead of failed with that error.
 - `claudeacp`: a replayed user message keeps the user's words as claude-agent-acp does: each marker tag closes only with its own closing tag, an opening tag with no close is the user's text, and a message is shown as the command it ran only when nothing but markers is in it (and the command names itself with a `/` and printed nothing).
+- `claudeagent/sessions`: `Subagent` has `Background` (the sidecar's `requestShape` is `background`) and `StoppedByUser`. `claudeacp`'s load uses them: a subagent claude ran in the background unasked is no longer ended by its call's immediate result, and one the user stopped ends cancelled.
 
 ## v0.3.1 (2026-11-14)
 

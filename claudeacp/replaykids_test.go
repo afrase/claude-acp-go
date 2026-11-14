@@ -159,6 +159,49 @@ func TestLoadSubagentLaunchErrors(t *testing.T) {
 	}
 }
 
+// claude may run a subagent in the background with no run_in_background
+// asked, and the user may stop one: its sidecar says each, and a load
+// goes by it, so the call's result is no end of a background one, and a
+// stopped one ends cancelled.
+func TestLoadSubagentSidecar(t *testing.T) {
+	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid,
+		userRec("u1", "Go"),
+		asstRec("aB", "msg_1", useBlock("toolu_B", "Agent", `{"description":"B","prompt":"go"}`)),
+		asstRec("aS", "msg_1", useBlock("toolu_S", "Agent", `{"description":"S","prompt":"go"}`)),
+		userRec("rB", resultBlocks("toolu_B", "Async agent launched", false)),
+		userRec("rS", resultBlocks("toolu_S", "done", false)),
+	)
+	meta := map[string]string{
+		"B": `{"toolUseId":"toolu_B","requestShape":"background"}`,
+		"S": `{"toolUseId":"toolu_S","requestShape":"foreground","stoppedByUser":true}`,
+	}
+	for _, id := range []string{"B", "S"} {
+		p.writeSubagent(t, cwd, sid, "agent"+id, "toolu_"+id, asstRec(id+"1", "msg_"+id, textBlock("on it")))
+		dir := filepath.Join(sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.ProjectDir(cwd), sid, "subagents")
+		if err := os.WriteFile(filepath.Join(dir, "agent-agent"+id+".meta.json"), []byte(meta[id]), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	var ends []string
+	for _, l := range p.replayed() {
+		if strings.Contains(l, `"state":{"state":"idle"`) {
+			ends = append(ends, l)
+		}
+	}
+	ended := func(id, state string) string {
+		return sid + " subagent " + `{"sessionId":"agent` + id + `","state":` + state + `}`
+	}
+	want := []string{ended("B", `{"state":"idle"}`), ended("S", `{"state":"idle","stopReason":"cancelled"}`)}
+	if !slices.Equal(ends, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(ends, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // A task notification claude took into a running turn is kept only as a
 // queued_command attachment, and one still queued as claude closed only
 // as a queue-operation: a load reads both for the

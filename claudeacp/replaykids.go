@@ -17,7 +17,7 @@ import (
 // session. Its end goes once the whole history is out: what the last
 // task notification about it said (a user message, or a prompt claude
 // queued, in whichever transcript started it: findQueued); else stopped,
-// when the main agent
+// when the main agent or the user (its sidecar says)
 // stopped it; else, for one in the foreground, how its call ended (an
 // error that names a stop is cancelled, as live); else
 // idle with no reason, as nothing says (a background subagent that was
@@ -32,7 +32,7 @@ type replayedKid struct {
 	failure    string // that result's text, when it failed
 	ended      string // the status of the last task notification about it
 	summary    string
-	stopped    bool // the main agent stopped it (TaskStop)
+	stopped    bool // the main agent (TaskStop) or the user stopped it
 }
 
 // findAgents finds the subagents' transcripts and the calls that started
@@ -81,11 +81,13 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	if r.byID[a.ID] != nil {
 		return // another call ran it again: the first one showed it
 	}
+	// claude may run it in the background unasked; its sidecar says so.
+	in.Background = in.Background || a.Background
 	sa := r.s.kids.replayed(a.ID, call, stream, in)
 	if sa == nil { // the session is live and has it already
 		return
 	}
-	kid := &replayedKid{sa: sa, background: in.Background}
+	kid := &replayedKid{sa: sa, background: in.Background, stopped: a.StoppedByUser}
 	r.kids = append(r.kids, kid)
 	r.byID[sa.id] = kid
 	store := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}
