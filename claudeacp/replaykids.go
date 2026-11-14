@@ -44,11 +44,10 @@ type replayedKid struct {
 // them: each one's sidecar names its call; else the call's result names
 // the subagent (linkResults).
 func (r *replayer) findAgents(ms []sessions.Message) {
-	list, err := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}.Subagents(r.s.id, r.cwd)
-	if err != nil {
+	if r.t == nil {
 		return
 	}
-	for _, a := range list {
+	for _, a := range r.t.Subagents() {
 		r.byAgent[a.ID] = a
 		if a.ParentToolUseID != "" {
 			r.agents[a.ParentToolUseID] = a
@@ -92,8 +91,7 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	kid := &replayedKid{sa: sa, call: call, live: live, background: in.Background, stopped: a.StoppedByUser}
 	r.kids = append(r.kids, kid)
 	r.byID[sa.id] = kid
-	store := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}
-	ms, err := store.SubagentMessages(r.s.id, r.cwd, a.ID)
+	ms, err := a.Messages()
 	if err != nil {
 		r.s.log.Info("replaying a subagent", "agent", a.ID, "err", err)
 		return
@@ -101,7 +99,7 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	ms = stripFork(ms)
 	r.linkResults(ms)
 	r.findSends(ms)
-	if qs, err := store.SubagentQueuedPrompts(r.s.id, r.cwd, a.ID); err == nil {
+	if qs, err := a.QueuedPrompts(); err == nil {
 		r.place(qs, ms, false)
 	}
 	r.messages(ms, call)
@@ -283,7 +281,10 @@ func (r *replayer) launchOf(call string) *replayedKid {
 // queue-operations, so its replay leaves a subagent whose end was still
 // queued idle with no reason.
 func (r *replayer) findQueued(ms []sessions.Message) {
-	qs, err := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}.QueuedPrompts(r.s.id, r.cwd)
+	if r.t == nil {
+		return
+	}
+	qs, err := r.t.QueuedPrompts()
 	if err != nil {
 		return
 	}

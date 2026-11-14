@@ -85,10 +85,10 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	defer unlock()
 	s, err := a.session(acp.SessionID(id))
 	open := err == nil
+	var t *sessions.Transcript
 	var ms []sessions.Message
-	var dir string
 	if !open || replay {
-		if ms, dir, err = a.findHistory(id, su.cwd); err != nil && !open {
+		if t, ms, _, err = a.findHistory(ctx, id, su.cwd); err != nil && !open {
 			return nil, err
 		}
 	}
@@ -99,7 +99,7 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 		}
 	}
 	if replay {
-		s.replay(ms, dir)
+		s.replay(ms, t)
 	}
 	s.cmds.sendAll()
 	return s, nil
@@ -148,13 +148,14 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 	if s, err := a.session(req.SessionID); err == nil {
 		from = s.cwd
 	}
-	if _, from, err = a.findHistory(id, from); err != nil {
+	var t *sessions.Transcript
+	if t, _, from, err = a.findHistory(ctx, id, from); err != nil {
 		return nil, err
 	}
 	store := sessions.Store{ConfigDir: a.cfg.ConfigDir}
 	var upTo string
 	if at := forkAt(req.Meta); at != "" {
-		if upTo, err = store.LastRecord(id, from, at); err != nil {
+		if upTo, err = t.LastRecord(at); err != nil {
 			return nil, invalidParams("no message %q in session %s to fork at", at, id)
 		}
 	}
@@ -196,24 +197,32 @@ func forkAt(meta map[string]any) string {
 	return id
 }
 
-// findHistory is session id's messages and the folder they were found
-// for: cwd's, else "" (any project's); resourceNotFound when claude has
-// no transcript of it, and an internal error when its transcript can't be
-// read, so a client keeps a session it may yet get back.
-func (a *agent) findHistory(id, cwd string) ([]sessions.Message, string, error) {
+// findHistory is session id's transcript, found once (its subagents and
+// queued prompts are read from it too), its messages, and the folder it
+// was found for: cwd's, else "" (any project's); resourceNotFound when
+// claude has no transcript of it, and an internal error when its
+// transcript can't be read, so a client keeps a session it may yet get
+// back. ctx ends the search.
+func (a *agent) findHistory(ctx context.Context, id, cwd string) (*sessions.Transcript, []sessions.Message, string, error) {
 	for _, dir := range []string{cwd, ""} {
-		ms, err := sessions.Store{ConfigDir: a.cfg.ConfigDir}.Messages(id, dir)
+		t, err := sessions.Store{ConfigDir: a.cfg.ConfigDir}.Open(ctx, id, dir)
+		var ms []sessions.Message
+		if err == nil {
+			ms, err = t.Messages()
+		}
 		switch {
 		case err == nil:
-			return ms, dir, nil
+			return t, ms, dir, nil
 		case errors.Is(err, sessions.ErrInvalidID):
-			return nil, "", notFound(id)
+			return nil, nil, "", notFound(id)
+		case ctx.Err() != nil:
+			return nil, nil, "", err
 		case !errors.Is(err, fs.ErrNotExist):
-			return nil, "", &acp.Error{Code: acp.ErrorCodeInternalError, Message: fmt.Sprintf("Reading the session's history: %v", err)}
+			return nil, nil, "", &acp.Error{Code: acp.ErrorCodeInternalError, Message: fmt.Sprintf("Reading the session's history: %v", err)}
 		}
 		if dir == "" {
 			break
 		}
 	}
-	return nil, "", notFound(id)
+	return nil, nil, "", notFound(id)
 }
