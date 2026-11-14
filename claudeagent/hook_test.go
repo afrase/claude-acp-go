@@ -17,14 +17,14 @@ func TestRegisterHooks(t *testing.T) {
 		}
 	}
 	wire, byID, err := registerHooks(map[HookEvent][]HookMatcher{
-		HookPreToolUse:  {{Matcher: "Edit|Write", Timeout: 1500 * time.Millisecond, Fn: fn("pre")}},
+		HookPreToolUse:  {{Matcher: "Edit|Write", Timeout: 1500 * time.Millisecond, OnFailure: HookFailBlock, Fn: fn("pre")}},
 		HookPostToolUse: {{Fn: fn("post all")}, {Matcher: "Bash", Timeout: 30 * time.Second, Fn: fn("post bash")}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := `{"PostToolUse":[{"hookCallbackIds":["hook_0"]},{"hookCallbackIds":["hook_1"],"matcher":"Bash","timeout":30}],` +
-		`"PreToolUse":[{"hookCallbackIds":["hook_2"],"matcher":"Edit|Write","timeout":1.5}]}`
+		`"PreToolUse":[{"hookCallbackIds":["hook_2"],"matcher":"Edit|Write","timeout":1.5,"onFailure":"block"}]}`
 	if b, _ := json.Marshal(wire); string(b) != want {
 		t.Errorf("%s", b)
 	}
