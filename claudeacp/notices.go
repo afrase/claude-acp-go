@@ -422,16 +422,34 @@ func (s *session) localOutput(m *claudeagent.LocalCommandOutput) {
 }
 
 // refusal keeps why the model refused a top-level response, from stop
-// details ({"explanation": …}) or claude's own words: a turn that ends
-// refused says so.
+// details ({"explanation": …}), or claude's own words when nothing has
+// said: a turn that ends refused says so. The response's own explanation
+// wins whichever comes first, as in claude-agent-acp.
 func (s *session) refusal(details json.RawMessage, said string) {
 	var d struct {
 		Explanation string `json:"explanation"`
 	}
 	_ = json.Unmarshal(details, &d)
-	if text := cmp.Or(d.Explanation, said); text != "" {
-		s.st.refused = text
+	switch {
+	case d.Explanation != "":
+		s.st.refused = d.Explanation
+	case s.st.refused == "":
+		s.st.refused = said
 	}
+}
+
+// refusedNoFallback is claude's word that a refused response has no
+// model to retry on. It speaks for the user's turn unless claude says
+// that no user message was refused (null: a turn claude started itself,
+// a background task's follow-up), whose explanation isn't the user's.
+func (s *session) refusedNoFallback(m *claudeagent.ModelRefusalNoFallback) {
+	var whose struct {
+		UUID json.RawMessage `json:"refused_user_message_uuid"`
+	}
+	if json.Unmarshal(m.Raw, &whose) == nil && string(whose.UUID) == "null" {
+		return
+	}
+	s.refusal(nil, cmp.Or(m.APIRefusalExplanation, m.Content))
 }
 
 // signIn says the message is the one claude writes in place of the

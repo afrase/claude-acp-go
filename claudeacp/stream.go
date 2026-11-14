@@ -1,7 +1,6 @@
 package claudeacp
 
 import (
-	"cmp"
 	"encoding/json"
 	"strings"
 
@@ -79,7 +78,7 @@ func (s *session) handle(m claudeagent.Message) {
 	case *claudeagent.ModelRefusalFallback:
 		s.modelFallback(m)
 	case *claudeagent.ModelRefusalNoFallback:
-		s.refusal(nil, cmp.Or(m.APIRefusalExplanation, m.Content))
+		s.refusedNoFallback(m)
 	case *claudeagent.MemoryRecall:
 		s.tools.memoryRecall(m)
 	case *claudeagent.LocalCommandOutput:

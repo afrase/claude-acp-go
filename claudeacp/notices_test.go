@@ -297,3 +297,37 @@ func TestPlainText(t *testing.T) {
 		}
 	}
 }
+
+// A refused response's own explanation is the turn's, whether claude's
+// banner comes after it or before; a banner for a turn no user started
+// says nothing of the user's.
+func TestRefusalExplanation(t *testing.T) {
+	refused := event(`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"Not that."}}}`)
+	banner := sendf(`{"type":"system","subtype":"model_refusal_no_fallback","original_model":"m","api_refusal_explanation":null,"refused_user_message_uuid":"id2","content":"Claude Code is unable to respond to this request."}`)
+	background := sendf(`{"type":"system","subtype":"model_refusal_no_fallback","original_model":"m","api_refusal_explanation":"Background.","refused_user_message_uuid":null,"content":"x"}`)
+	for _, tc := range []struct {
+		name  string
+		steps []claudetest.Step
+		want  string
+	}{
+		{"banner after", []claudetest.Step{refused, banner}, "Not that."},
+		{"banner before", []claudetest.Step{banner, refused}, "Not that."},
+		{"banner alone", []claudetest.Step{banner}, "Claude Code is unable to respond to this request."},
+		{"not the user's", []claudetest.Step{background}, ""},
+	} {
+		steps := []claudetest.Step{user("id2"), echo("id2"), event(`{"type":"message_start","message":{"id":"msg_1","model":"m"}}`)}
+		steps = append(steps, tc.steps...)
+		steps = append(steps, result(names("id2")+`,"stop_reason":"refusal"`), claudetest.Send(idle))
+		p := start(t, nil, fake(steps...))
+		if got := stopReason(p.prompt(t, p.open(t), "a")); got != "refusal" {
+			t.Error(tc.name, got)
+		}
+		var want []string
+		if tc.want != "" {
+			want = []string{"text::" + tc.want}
+		}
+		if got := p.texts(); !slices.Equal(got, want) {
+			t.Errorf("%s: %q", tc.name, got)
+		}
+	}
+}
