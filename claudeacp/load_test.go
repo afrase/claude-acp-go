@@ -73,6 +73,22 @@ func TestLoadReplaysHistory(t *testing.T) {
 	}
 }
 
+// A call the history has no result for (claude was stopped while it ran,
+// or the session was forked before its result) ends failed, as nothing
+// will end it now.
+func TestLoadCallWithNoResult(t *testing.T) {
+	p := start(t, nil, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "Run it"), asstRec("a1", "msg_1", useBlock("toolu_x", "Bash", `{"command":"sleep 100"}`)))
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{sid + " user u1 Run it", sid + " call toolu_x sleep 100 pending", sid + " update toolu_x failed", sid + " commands"}
+	if got := p.replayed(); !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // Two loads of a session at once run one claude: the second finds the
 // session the first opened.
 func TestLoadTwiceAtOnce(t *testing.T) {

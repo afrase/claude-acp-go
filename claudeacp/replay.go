@@ -2,6 +2,8 @@ package claudeacp
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -15,7 +17,8 @@ import (
 // own copy can line the two up: the
 // user's messages under claude's uuids, the model's text under the API's
 // message ids, each tool call as a tool_call with its whole input then
-// its result. Usage, notices and permission requests aren't replayed. To
+// its result (or failed, when the history has none). Usage, notices and
+// permission requests aren't replayed. To
 // a client of subagents, each subagent is announced after the call that
 // started it, its own transcript replays on its session, and once the
 // whole history is out each says how it ended.
@@ -43,7 +46,32 @@ func (s *session) replay(ms []sessions.Message, cwd string) {
 		r.findQueued(ms)
 	}
 	r.messages(ms, "")
+	r.unanswered()
 	r.ends()
+}
+
+// noResultText is what a replayed call with no result in the history
+// says: claude was stopped while it ran, or the session was forked
+// before its result.
+const noResultText = "The history has no result for this call."
+
+// unanswered ends the calls the history shows with no result, as nothing
+// will end them now; a call the live session still runs is left to it.
+func (r *replayer) unanswered() {
+	for _, id := range slices.Sorted(maps.Keys(r.calls)) {
+		if t := r.calls[id]; !r.s.tools.running(t.id) {
+			r.s.tools.show(t, report{status: acp.ToolCallStatusFailed, content: texts(noResultText)})
+		}
+	}
+	clear(r.calls)
+}
+
+// running says the call id is one the session runs now.
+func (ts *tools) running(id string) bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	t := ts.byID[id]
+	return t != nil && !t.ended
 }
 
 // messages replays ms, of the stream of the call stream ("" at the top).
