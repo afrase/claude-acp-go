@@ -26,6 +26,7 @@ import (
 // The test binary plays two parts for TestClaudeEndsWithTheAgent, as
 // CLAUDEACP_TEST_ROLE says: the agent (Main) and a stand-in claude.
 func TestMain(m *testing.M) {
+	managedSettings = "" // the machine's own aren't the tests'
 	switch os.Getenv("CLAUDEACP_TEST_ROLE") {
 	case "agent":
 		if Main() != nil {

@@ -3,6 +3,8 @@ package claudeacp
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -147,5 +149,69 @@ func TestSetMode(t *testing.T) {
 	}
 	if got := requests(t, f); !slices.Equal(got, []string{`{"mode":"plan","subtype":"set_permission_mode"}`, `{"mode":"bypassPermissions","subtype":"set_permission_mode"}`}) {
 		t.Errorf("%q", got)
+	}
+}
+
+// The effort option shows what claude's settings files and a settings
+// file the session names give it (a model's own first), and an effort
+// change carries ultracode on when they turned it on.
+func TestSettingsFiles(t *testing.T) {
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		files  func(config, cwd string)
+		given  any
+		effort string
+	}{
+		{"a file the session names", func(_, cwd string) {
+			write(filepath.Join(cwd, "s.json"), `{"ultracode":true,"effortLevel":"high"}`)
+		}, "s.json", "high"},
+		{"the user's and the project's", func(config, cwd string) {
+			write(filepath.Join(config, "settings.json"), `{"ultracode":true,"effortLevel":"low"}`)
+			write(filepath.Join(cwd, ".claude", "settings.json"), `{"modelSettings":{"Claude-Opus-5-5":{"effortLevel":"medium"}}}`)
+		}, nil, "medium"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setter(initAnswer)
+			p := start(t, nil, f)
+			cwd := t.TempDir()
+			tc.files(p.agent.cfg.ConfigDir, cwd)
+			opts := map[string]any{}
+			if tc.given != nil {
+				opts["settings"] = tc.given
+			}
+			r, err := p.NewSession(t.Context(), &acp.NewSessionRequest{Cwd: cwd, MCPServers: []acp.MCPServer{},
+				Meta: map[string]any{"claudeCode": map[string]any{"options": opts}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := summary(r.ConfigOptions); !strings.Contains(got, "effort/thought_level="+tc.effort+"[") {
+				t.Errorf("options %s", got)
+			}
+			req := &acp.SetSessionConfigOptionRequest{SessionID: r.SessionID, ConfigID: "effort",
+				ValueID: &acp.SetSessionConfigOptionRequestValueID{Value: "default"}}
+			if _, err := p.SetSessionConfigOption(t.Context(), req); err != nil {
+				t.Fatal(err)
+			}
+			if got := requests(t, f); !slices.Equal(got, []string{`{"settings":{"effortLevel":null,"ultracode":true},"subtype":"apply_flag_settings"}`}) {
+				t.Errorf("requests %q", got)
+			}
+		})
+	}
+}
+
+func TestModelKey(t *testing.T) {
+	for in, want := range map[string]string{"Claude-Sonnet-5-1m": "claude-sonnet-5[1m]", "claude-opus-5-5": "claude-opus-5-5", "opus[1m]": "opus[1m]"} {
+		if got := modelKey(in); got != want {
+			t.Errorf("modelKey(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
