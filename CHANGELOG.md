@@ -44,6 +44,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claude-tee`: a frame's `ms` is taken as the frame is written, so times never go back in a cassette when stdin and stdout lines come together.
 - `claude-tee`: a cassette no longer keeps an MCP server's credentials in a `url` (its userinfo, and query parameters named like a key or token) or in its `args` (the values of flags so named, `NAME=value` pairs and `Authorization: …` style headers). A token in a URL's path is still kept: read a cassette before you share it.
 - The README no longer calls `claude-acp` a static binary, and shows `CGO_ENABLED=0 go install …` for one on Linux. It and the command's doc say claude's own stderr is logged as claude wrote it (capped), so it may quote a prompt.
+- `claudeacp`: a load or fork finds the session's transcript once, with `sessions.Store.Open` under the request's ctx, and the replay reads the subagents and queued prompts from it: `git worktree list` runs once per folder looked in, not 3+2N times for N subagents.
 
 ## v0.3.1 (2026-11-14)
 
