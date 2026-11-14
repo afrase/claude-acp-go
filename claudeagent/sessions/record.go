@@ -1,6 +1,8 @@
 package sessions
 
-import "os"
+import (
+	"os"
+)
 
 // LastRecord returns the uuid of the last record of a message in session
 // id's transcript, to fork at it (ForkOptions.UpTo): messageID is a user
@@ -10,11 +12,18 @@ import "os"
 // subagent's. An error matching fs.ErrNotExist says the session or the
 // message isn't there.
 func (s Store) LastRecord(id, cwd, messageID string) (string, error) {
-	path, err := s.find(id, cwd)
+	t, err := s.open(id, cwd)
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	return t.LastRecord(messageID)
+}
+
+// LastRecord returns the uuid of the last record of a message in the
+// session's transcript, as Store.LastRecord does.
+func (t *Transcript) LastRecord(messageID string) (string, error) {
+	id := t.id
+	data, err := os.ReadFile(t.path)
 	if err != nil {
 		return "", err
 	}

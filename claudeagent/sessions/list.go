@@ -78,7 +78,7 @@ func (s Store) List(cwd string, limit, offset int) ([]Info, error) {
 
 // listProject lists the sessions of dir and of its repository's worktrees.
 func listProject(projects, dir string) []Info {
-	wts := worktrees(dir)
+	wts := anyWorktrees(dir)
 	own, ok := findProjectDir(projects, dir)
 	if len(wts) <= 1 {
 		if !ok {
@@ -158,7 +158,7 @@ func readProject(dir, cwd string) []Info {
 // Get returns the details of session id; an error matching fs.ErrNotExist
 // when it isn't there, is a subagent's, or has nothing to name it by.
 func (s Store) Get(id, cwd string) (*Info, error) {
-	path, err := s.find(id, cwd)
+	path, err := s.find(id, cwd, anyWorktrees)
 	if err != nil {
 		return nil, err
 	}

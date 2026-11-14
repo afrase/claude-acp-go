@@ -51,7 +51,7 @@ func (s Store) Fork(id, cwd string, o ForkOptions) (string, error) {
 			return "", err
 		}
 	}
-	path, err := s.find(id, cwd)
+	path, err := s.find(id, cwd, anyWorktrees)
 	if err != nil {
 		return "", err
 	}
@@ -281,7 +281,7 @@ func (s Store) Delete(id, cwd string) error {
 	// Every folder, not just the first with the transcript: the CLI leaves
 	// empty transcripts in some, and one ahead of the real one must not
 	// keep it.
-	for _, dir := range candidates(projects, cwd) {
+	for _, dir := range candidates(projects, cwd, anyWorktrees) {
 		path := filepath.Join(dir, id)
 		if err := os.Remove(path + ".jsonl"); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

@@ -57,7 +57,9 @@ func notFound(what string) error {
 // Its methods that read or change one session take the session's id, then
 // the working directory to look from: its project folder first, then its
 // git repository's other worktrees' (the CLI resumes a session from any of
-// them); "" looks in every project folder.
+// them); "" looks in every project folder. Each looks for the session
+// afresh, running git to list the worktrees; to read several things of
+// one session, Open it once and read them from the Transcript.
 type Store struct {
 	// ConfigDir is the CLI's config folder; "" is $CLAUDE_CONFIG_DIR, else
 	// ~/.claude.
@@ -190,12 +192,20 @@ func subdirs(dir string) []string {
 	return out
 }
 
+// lister lists the worktrees of the git repository a folder is in.
+type lister func(dir string) []string
+
+// anyWorktrees is the lister of the Store methods that take no context:
+// git runs to its end, 5 s at most. A caller with a context uses Open.
+var anyWorktrees lister = func(dir string) []string { return worktrees(context.Background(), dir) }
+
 // worktrees lists the worktrees of the git repository dir is in, the main
 // one first; none outside a repository or without git. A session started in
 // one worktree is found from another, as the CLI's own resume does. It is a
-// variable so tests can stand in for git.
-var worktrees = func(dir string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// variable so tests can stand in for git. ctx ends the git it runs, which
+// has 5 s at most.
+var worktrees = func(ctx context.Context, dir string) []string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Listing runs no hook or filter; fsmonitor is off so the repository's
 	// config can't start a program either.
@@ -221,8 +231,8 @@ func parseWorktrees(out string) []string {
 
 // candidates returns the project folders where a session of cwd may be, in
 // the order to look: cwd's own, then its repository's other worktrees'; with
-// no cwd, every project folder.
-func candidates(projects, cwd string) []string {
+// no cwd, every project folder. list lists the worktrees.
+func candidates(projects, cwd string, list lister) []string {
 	if cwd == "" {
 		dirs := subdirs(projects)
 		for i, d := range dirs {
@@ -235,7 +245,7 @@ func candidates(projects, cwd string) []string {
 	if pd, ok := findProjectDir(projects, dir); ok {
 		out = append(out, pd)
 	}
-	for _, wt := range worktrees(dir) {
+	for _, wt := range list(dir) {
 		if wt == dir {
 			continue
 		}
@@ -249,7 +259,7 @@ func candidates(projects, cwd string) []string {
 // find returns the path of session id's transcript, looking where
 // candidates says. Only a file with something in it counts, as the CLI
 // writes an empty one in some folders.
-func (s Store) find(id, cwd string) (string, error) {
+func (s Store) find(id, cwd string, list lister) (string, error) {
 	if err := checkID(id); err != nil {
 		return "", err
 	}
@@ -257,7 +267,7 @@ func (s Store) find(id, cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, dir := range candidates(projects, cwd) {
+	for _, dir := range candidates(projects, cwd, list) {
 		path := filepath.Join(dir, id+".jsonl")
 		if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
 			return path, nil

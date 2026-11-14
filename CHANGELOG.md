@@ -24,6 +24,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `sessions.Store.Fork` with `ForkOptions.Cwd` gives the fork's records that cwd, so `List` and `Get` report the fork in its new folder (they reported the source's, and a load from there failed).
 - `sessions`: a long path's project folder under another CLI build's hash is taken only when its transcripts record that path as their cwd. The first 200 characters alone matched a sibling deep path's folder, so `List` showed, and `Fork` wrote into, another project's.
 - Docs: `sessions.Store.Fork` says the subagents' transcripts aren't copied, so a replay of a fork shows its Agent calls without their subagents.
+- New `sessions.Store.Open(ctx, id, cwd)` finds a session once and returns a `*Transcript` with `Messages`, `Subagents`, `QueuedPrompts` and `LastRecord`; a `Subagent` has `Messages` and `QueuedPrompts` of its own. Reading a session with N subagents then runs `git worktree list` once, not 3+2N times, and re-reads no sidecars. `ctx` reaches the git it runs. The `Store` methods are unchanged and work as before.
 
 ## v0.3.1 (2026-11-14)
 

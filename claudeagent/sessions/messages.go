@@ -47,11 +47,17 @@ type Message struct {
 // are left out. An error matching fs.ErrNotExist says the session isn't
 // there.
 func (s Store) Messages(id, cwd string) ([]Message, error) {
-	path, err := s.find(id, cwd)
+	t, err := s.open(id, cwd)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	return t.Messages()
+}
+
+// Messages returns the session's conversation as it stands, as
+// Store.Messages does.
+func (t *Transcript) Messages() ([]Message, error) {
+	data, err := os.ReadFile(t.path)
 	if err != nil {
 		return nil, err
 	}
@@ -88,13 +94,20 @@ type Subagent struct {
 // in the order of their files' names. A session with none has none; an
 // error matching fs.ErrNotExist says the session isn't there.
 func (s Store) Subagents(id, cwd string) ([]Subagent, error) {
-	path, err := s.find(id, cwd)
+	t, err := s.open(id, cwd)
 	if err != nil {
 		return nil, err
 	}
+	return t.Subagents(), nil
+}
+
+// Subagents returns the session's subagents that have a transcript, as
+// Store.Subagents does. Each one's Messages and QueuedPrompts read its
+// transcript without looking for it again.
+func (t *Transcript) Subagents() []Subagent {
 	var out []Subagent
-	walkAgents(filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents"), &out)
-	return out, nil
+	walkAgents(filepath.Join(strings.TrimSuffix(t.path, ".jsonl"), "subagents"), &out)
+	return out
 }
 
 // walkAgents collects the agent-<id>.jsonl files in dir and the folders
@@ -110,9 +123,7 @@ func walkAgents(dir string, out *[]Subagent) {
 		}
 		name, ok := strings.CutPrefix(e.Name(), "agent-")
 		if name, ok2 := strings.CutSuffix(name, ".jsonl"); ok && ok2 && e.Type().IsRegular() {
-			a := Subagent{ID: name, path: path}
-			a.readMeta()
-			*out = append(*out, a)
+			*out = append(*out, withMeta(Subagent{ID: name, path: path}))
 		}
 	}
 }
@@ -120,23 +131,23 @@ func walkAgents(dir string, out *[]Subagent) {
 // maxMeta is the most of a sidecar read: claude's are a few hundred bytes.
 const maxMeta = 1 << 16
 
-// readMeta reads the sidecar beside a subagent's transcript; one that is
-// missing or isn't a JSON object tells nothing, nor does one that isn't a
-// regular file: the folder is the agent's to write, and a pipe there
-// would hold the read for good.
-func (a *Subagent) readMeta() {
+// withMeta is a with what the sidecar beside its transcript says; one
+// that is missing or isn't a JSON object tells nothing, nor does one that
+// isn't a regular file: the folder is the agent's to write, and a pipe
+// there would hold the read for good.
+func withMeta(a Subagent) Subagent {
 	path := strings.TrimSuffix(a.path, ".jsonl") + ".meta.json"
 	f, err := openRegular(path)
 	if err != nil {
-		return
+		return a
 	}
 	defer f.Close() //nolint:errcheck // read-only
 	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
-		return
+		return a
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxMeta))
 	if err != nil {
-		return
+		return a
 	}
 	var meta struct {
 		ToolUseID     str `json:"toolUseId"`
@@ -144,9 +155,10 @@ func (a *Subagent) readMeta() {
 		WorktreePath  str `json:"worktreePath"`
 	}
 	if json.Unmarshal(data, &meta) != nil {
-		return
+		return a
 	}
 	a.ParentToolUseID, a.ParentAgentID, a.WorktreePath = string(meta.ToolUseID), string(meta.ParentAgentID), string(meta.WorktreePath)
+	return a
 }
 
 // SubagentMessages returns the messages of session id's subagent agentID,
@@ -157,6 +169,16 @@ func (s Store) SubagentMessages(id, cwd, agentID string) ([]Message, error) {
 	a, err := s.subagent(id, cwd, agentID)
 	if err != nil {
 		return nil, err
+	}
+	return a.Messages()
+}
+
+// Messages returns the subagent's messages, oldest first, as
+// Store.SubagentMessages does. A Subagent that isn't Subagents' has none
+// (an error matching fs.ErrNotExist).
+func (a Subagent) Messages() ([]Message, error) {
+	if a.path == "" {
+		return nil, notFound("subagent " + a.ID)
 	}
 	data, err := os.ReadFile(a.path)
 	if err != nil {
