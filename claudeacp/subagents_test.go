@@ -274,6 +274,53 @@ func TestSubagentAsks(t *testing.T) {
 	})
 }
 
+// Stopping a subagent stops the foreground subagents it waits on too:
+// what they ask is withdrawn with it, so they don't show running again
+// while they are being stopped.
+func TestSubagentStopNested(t *testing.T) {
+	release := make(chan struct{})
+	f := fake(user("id2"), echo("id2"), agentCall(false), taskStarted(""),
+		sendf(`{"type":"assistant","parent_tool_use_id":"toolu_p","message":{"id":"msg_s","content":[{"type":"tool_use","id":"toolu_q","name":"Agent",`+
+			`"input":{"description":"Inner","prompt":"go"}}]}}`),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"b2","tool_use_id":"toolu_q","parent_task_id":"a1","task_type":"local_agent","subagent_type":"general-purpose"}`),
+		canUseTool("toolu_s", "Bash", `{"command":"ls"}`, `,"agent_id":"b2"`),
+		// claude stops b2 with a1, withdrawing its request itself.
+		claudetest.Until(release),
+		sendf(`{"type":"control_cancel_request","request_id":"p_toolu_s"}`),
+		sendf(`{"type":"system","subtype":"task_notification","task_id":"b2","status":"stopped"}`),
+		taskEnd("stopped"), agentDone, result(names("id2")), claudetest.Send(idle))
+	f.Respond(`{"type":"control_request","request":{"subtype":"stop_task"}}`,
+		`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)
+	f.Respond(`{"type":"control_response","response":{"request_id":"p_toolu_s"}}`, `{"type":"keep_alive"}`)
+	p := start(t, withSubagents, f)
+	opened := make(chan struct{})
+	p.permit = func(ctx context.Context, _ *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+		close(opened)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	w := p.prompt(t, p.open(t), "go")
+	wait(t, opened, "the request")
+	if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "stop_task", func() bool { return len(asked(f)) > 0 })
+	close(release)
+	if got := stopReason(w); got != "end_turn" {
+		t.Fatal(got)
+	}
+	var states []string
+	for _, n := range p.notes() {
+		if su := n.Update.SubagentUpdate; su != nil && su.SessionID == "b2" && !su.Title.Present {
+			b, _ := json.Marshal(su.State)
+			states = append(states, string(b))
+		}
+	}
+	if want := []string{stateAsking, `{"state":"idle","stopReason":"cancelled"}`}; !slices.Equal(states, want) {
+		t.Errorf("b2's states %v, want %v", states, want)
+	}
+}
+
 // A subagent that ended runs again for a SendMessage that resumed it,
 // whose message is its next; or when claude says it runs, with no
 // message to show.
@@ -531,4 +578,24 @@ func (c *client) notes() []acp.SessionNotification {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.updates)
+}
+
+// A stop reaches the subagent and the foreground ones under it, through
+// foreground ones only.
+func TestSubagentStopsWith(t *testing.T) {
+	var k subagents
+	k.init("s1", true, func(string, acp.SessionUpdate) {})
+	for _, sa := range []*subagent{{id: "a"}, {id: "b", parent: "a"}, {id: "c", parent: "b"},
+		{id: "bg", parent: "a", background: true}, {id: "d", parent: "bg"}} {
+		k.byID[sa.id] = sa
+	}
+	for _, tc := range []struct {
+		agent, id string
+		want      bool
+	}{{"a", "a", true}, {"b", "a", true}, {"c", "a", true}, {"bg", "a", false}, {"d", "a", false},
+		{"bg", "bg", true}, {"d", "bg", true}, {"a", "b", false}, {"x", "a", false}} {
+		if got := k.stopsWith(tc.agent, tc.id); got != tc.want {
+			t.Errorf("stopsWith(%s, %s) = %v", tc.agent, tc.id, got)
+		}
+	}
 }

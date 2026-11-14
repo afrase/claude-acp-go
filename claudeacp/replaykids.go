@@ -225,8 +225,11 @@ func (k *subagents) replayed(id, call, stream string, in launch) *subagent {
 		return nil
 	}
 	sa := &subagent{id: id, call: call, on: k.sid, background: in.Background}
-	if p := k.byCall[stream]; p != nil && p.shown {
-		sa.on = p.id
+	if p := k.byCall[stream]; p != nil {
+		sa.parent = p.id
+		if p.shown {
+			sa.on = p.id
+		}
 	}
 	k.byID[sa.id], k.byCall[call] = sa, sa
 	k.announceLocked(sa, in, "", "")

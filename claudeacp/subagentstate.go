@@ -59,10 +59,11 @@ func (s *session) resumed(call string, structured json.RawMessage) {
 }
 
 // stopSubagent stops the subagent id alone, as a cancel of its child
-// session asks: what it asks the user is withdrawn, and claude stops its
+// session asks: what it and the foreground subagents it waits on ask the
+// user is withdrawn, as claude stops those too, and claude stops its
 // task. Its end comes as claude reports it.
 func (s *session) stopSubagent(id string) {
-	s.withdraw(func(a *ask) bool { return a.agent == id })
+	s.withdraw(func(a *ask) bool { return a.agent == id || a.agent != "" && s.kids.stopsWith(a.agent, id) })
 	s.bg.Go(func() {
 		if err := s.cs.StopTask(s.a.ctx, id); err != nil {
 			s.log.Info("stopping a subagent", "err", err)

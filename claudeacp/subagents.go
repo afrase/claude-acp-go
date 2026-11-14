@@ -30,6 +30,7 @@ type subagent struct {
 	call       string // the call that started it, or ran it again last
 	run        string // claude's run of it now: a frame of an earlier one is late
 	on         string // the session it was announced on
+	parent     string // the subagent that started it, if one did
 	background bool   // a parent's cancel spares it
 	shown      bool   // announced to the client
 	asks       int    // its permission and question requests open
@@ -147,6 +148,27 @@ func (k *subagents) inBackground(agent string) bool {
 	return sa != nil && sa.background && !sa.ended
 }
 
+// stopsWith says the subagent agent stops when claude stops the subagent
+// id: it is id, or one id waits on, a foreground subagent of a foreground
+// subagent of id and so on. A background one runs on.
+func (k *subagents) stopsWith(agent, id string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	sa := k.byID[agent]
+	for range len(k.byID) { // a cycle can't hold it
+		switch {
+		case sa == nil:
+			return false
+		case sa.id == id:
+			return true
+		case sa.background:
+			return false
+		}
+		sa = k.byID[sa.parent]
+	}
+	return false
+}
+
 // shownChild says the child session id is one of these subagents'.
 func (k *subagents) shownChild(id string) bool {
 	k.mu.Lock()
@@ -186,12 +208,16 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 	if sa.call != "" {
 		k.byCall[sa.call] = sa
 	}
+	p := cmp.Or(k.byID[m.ParentTaskID], k.byCall[stream])
+	if p != nil {
+		sa.parent = p.id
+	}
 	if !k.children {
 		return
 	}
 	// A subagent's subagent is announced on its parent's child.
 	sa.on = k.sid
-	if p := cmp.Or(k.byID[m.ParentTaskID], k.byCall[stream]); p != nil && p.shown {
+	if p != nil && p.shown {
 		sa.on = p.id
 	}
 	k.announceLocked(sa, in, m.SubagentType, m.Description)
