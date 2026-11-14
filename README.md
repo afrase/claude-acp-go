@@ -80,7 +80,9 @@ If `claude` is not on the `PATH` that Zed gives agents, set it in `env`:
 `"env": {"CLAUDE_CODE_EXECUTABLE": "/opt/homebrew/bin/claude"}`.
 
 **Other ACP clients** start it the same way: run `claude-acp` and speak ACP
-on its stdin and stdout. It logs to stderr.
+on its stdin and stdout. It logs to stderr. Its own log lines never hold a
+prompt or a token, but it passes on what `claude` prints on its stderr,
+which may quote one (an error, or debug output you turned on).
 
 ## Use it as a library
 
