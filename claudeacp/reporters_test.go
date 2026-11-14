@@ -205,3 +205,21 @@ func TestHandedBack(t *testing.T) {
 		t.Errorf("%s", b)
 	}
 }
+
+// An approved plan's call keeps the plan, titled as having exited plan
+// mode, and a loaded skill's keeps its content: claude's result text is
+// for the model. A refused plan's reason is unfenced in rawOutput.
+func TestPlanAndSkillResults(t *testing.T) {
+	r := resultReport("ExitPlanMode", claudeagent.Block{Content: json.RawMessage(`"User has approved your plan. You can now start coding."`)}, nil)
+	if r.title != "Exited Plan Mode" || r.content != nil || r.status != acp.ToolCallStatusCompleted {
+		t.Errorf("%+v", r)
+	}
+	r = resultReport("Skill", claudeagent.Block{Content: json.RawMessage(`"Launching skill: pdf"`)}, nil)
+	if r.title != "" || r.content != nil {
+		t.Errorf("%+v", r)
+	}
+	r = resultReport("ExitPlanMode", claudeagent.Block{IsError: true, Content: json.RawMessage(`"` + "```\\nNot yet: add tests.\\n```" + `"`)}, nil)
+	if string(r.rawOutput) != `"Not yet: add tests."` || r.title != "" || r.status != acp.ToolCallStatusFailed {
+		t.Errorf("%+v %s", r, r.rawOutput)
+	}
+}

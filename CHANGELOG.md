@@ -8,6 +8,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: a Read of an image shows the image and a Read of a PDF a line naming the document, where an empty code block showed; a command's image output shows too. An API server tool's result (web search, web fetch, tool search, code execution) says what it found, where the call had no content.
 - `claudeacp`: a tool's result shows the tool's own output where claude gives it (`tool_use_result`), as claude-agent-acp does, live and in a loaded session: a command's output without claude's wrapper for the model (output too long ends with where it was saved), a file read without claude's notes, a web search's hits as `Title (url)` lines, and a subagent's report.
 - `claudeacp`: a subagent's report loses claude's frame also when claude's notes come above it (a turn limit, output saved), and its `agentId: … (…)` line also when unframed; a turn limit's note shows as `[Agent stopped at its turn limit — the output below is partial]`. Only a trailing `<usage>` block is cut.
+- `claudeacp`: an approved ExitPlanMode call keeps showing the plan, retitled `Exited Plan Mode`, and a Skill call keeps its content, where claude's result text for the model replaced them; a refused plan's reason is unfenced in `rawOutput`.
 
 ## v0.3.1 (2026-11-14)
 

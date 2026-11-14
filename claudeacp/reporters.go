@@ -165,7 +165,10 @@ func resultContent(name string, b claudeagent.Block, structured json.RawMessage)
 	}
 	text, shown := resultParts(b.Content)
 	switch name {
-	case "Edit", "Write":
+	case "Edit", "Write", "ExitPlanMode", "Skill":
+		// An edit's diff stays; ExitPlanMode's plan, which claude's word
+		// that it was approved repeats for the model; and the skill
+		// loaded, which claude's result only confirms.
 		if !b.IsError {
 			return nil, false
 		}
@@ -574,6 +577,21 @@ func byteSize(n int) string {
 	return strconv.FormatFloat(float64(n)/(1024*1024), 'f', 1, 64) + " MB"
 }
 
+// unfenced is ExitPlanMode's result as claude-agent-acp gives it raw:
+// claude fences why a plan was refused, and the fence goes.
+func unfenced(raw json.RawMessage) json.RawMessage {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return raw
+	}
+	m := fenced.FindStringSubmatch(s)
+	if m == nil {
+		return raw
+	}
+	b, _ := json.Marshal(m[1])
+	return b
+}
+
 // handBackStart and handBackEnd open a foreground subagent's report;
 // usageStart and usageEnd hold its token counts, after it.
 const (
@@ -595,6 +613,8 @@ var (
 	// turn limit, indented when the frame had no report to hold.
 	partialNote = regexp.MustCompile(`^(?:  )?NOTE: this agent stopped at its \d+-turn limit before finishing\.`)
 	backticks   = regexp.MustCompile("`+")
+	// fenced is text that is one fenced block, and what it holds.
+	fenced = regexp.MustCompile("^\\s*```[^\r\n]*\r?\n((?s:.*?))\r?\n```\\s*$")
 )
 
 // fence fences text as a Markdown code block, with a fence longer than

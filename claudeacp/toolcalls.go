@@ -109,6 +109,12 @@ func resultReport(name string, b claudeagent.Block, structured json.RawMessage) 
 	if b.IsError {
 		r.status = acp.ToolCallStatusFailed
 	}
+	if name == "ExitPlanMode" {
+		r.rawOutput = unfenced(b.Content)
+		if !b.IsError {
+			r.title = "Exited Plan Mode" // the plan stays as the call's content
+		}
+	}
 	if content, ok := resultContent(name, b, structured); ok {
 		r.content = content
 	}
