@@ -60,8 +60,10 @@ type config struct {
 var builtinAgents = []string{"claude", "general-purpose", "Explore", "Plan", "statusline-setup", defaultValue}
 
 // init sets c as claude starts the session: as its answer to initialize
-// (ir) says, else as the session asked (o), else claude's defaults.
-func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, booleans bool) {
+// (ir) says, else as the session asked (o), else claude's defaults. A
+// resumed session's model, which initialize doesn't say, is the one its
+// history last ran on (resumed), as claude resumes it on that.
+func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, resumed string, booleans bool) {
 	var set struct {
 		Ultracode   bool   `json:"ultracode"`
 		EffortLevel string `json:"effortLevel"`
@@ -79,7 +81,7 @@ func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, boole
 	c.effort, c.agent = cmp.Or(set.EffortLevel, defaultValue), cmp.Or(set.Agent, defaultValue)
 	c.fast = ir.FastModeState == "on" || ir.FastModeState == "" && set.FastMode
 	c.ultracode = set.Ultracode
-	c.model = c.resolve(cmp.Or(ir.CurrentModel, o.Model), "")
+	c.model = c.resolve(cmp.Or(ir.CurrentModel, o.Model, resumed), "")
 	for _, a := range ir.Agents {
 		if !slices.Contains(builtinAgents, a.Name) {
 			c.agents = append(c.agents, a)

@@ -258,3 +258,34 @@ func TestResume(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// A resumed session's model is the one its history last ran on, which
+// claude resumes it on and its answer to initialize doesn't say; not one
+// of claude's own messages' ("<synthetic>").
+func TestResumedModel(t *testing.T) {
+	init := strings.Replace(initAnswer, `"current_model":"claude-opus-5-5",`, "", 1)
+	for _, load := range []bool{false, true} {
+		p := start(t, nil, started(init, `null`))
+		cwd, sid := t.TempDir(), nthUUID(1)
+		synth := asstRec("a2", "msg_2", textBlock("API Error: 500"))
+		synth["message"].(map[string]any)["model"] = "<synthetic>"
+		p.writeHistory(t, cwd, sid, userRec("u1", "hello"), asstRec("a1", "msg_1", textBlock("hi")), synth)
+		var opts []acp.SessionConfigOption
+		if load {
+			r, err := p.LoadSession(context.Background(), &acp.LoadSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd, MCPServers: []acp.MCPServer{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts = r.ConfigOptions
+		} else {
+			r, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts = r.ConfigOptions
+		}
+		if got := summary(opts); !strings.Contains(got, "model/model=sonnet[") {
+			t.Errorf("load %v: %s", load, got)
+		}
+	}
+}

@@ -85,7 +85,7 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 		return nil, err
 	}
 	o.SessionID = a.newID() // so the ACP session's id is claude's
-	s, err := a.start(ctx, o.SessionID, o)
+	s, err := a.start(ctx, o.SessionID, o, "")
 	if err != nil {
 		return nil, err
 	}
@@ -95,8 +95,9 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 }
 
 // start runs claude for session id and opens the session once claude has
-// answered initialize.
-func (a *agent) start(ctx context.Context, id string, o claudeagent.Options) (*session, error) {
+// answered initialize. resumed is the model a resumed session's history
+// last ran on, which claude resumes it on.
+func (a *agent) start(ctx context.Context, id string, o claudeagent.Options, resumed string) (*session, error) {
 	s := &session{a: a, id: id, cwd: o.Cwd, log: a.log.With("session", id), read: make(chan struct{}), tick: make(chan struct{}), open: map[*ask]struct{}{}}
 	s.written = make(chan struct{})
 	close(s.written) // nothing to wait for
@@ -122,7 +123,7 @@ func (a *agent) start(ctx context.Context, id string, o claudeagent.Options) (*s
 	}
 	s.cs = cs
 	s.cfg.send, s.cfg.log, s.cfg.claude = s.update, s.log, cs
-	s.cfg.init(o, cs.Init(), a.clientCaps().booleans)
+	s.cfg.init(o, cs.Init(), resumed, a.clientCaps().booleans)
 	if ir := cs.Init(); ir != nil {
 		s.cmds.list = ir.Commands
 	}

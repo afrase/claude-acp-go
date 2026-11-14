@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync"
 
@@ -95,7 +96,7 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	}
 	if !open {
 		o.Resume = id
-		if s, err = a.start(ctx, id, o); err != nil {
+		if s, err = a.start(ctx, id, o, lastModel(ms)); err != nil {
 			return nil, err
 		}
 	}
@@ -151,7 +152,8 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		from = s.cwd
 	}
 	var t *sessions.Transcript
-	if t, _, from, err = a.findHistory(ctx, id, from); err != nil {
+	var ms []sessions.Message
+	if t, ms, from, err = a.findHistory(ctx, id, from); err != nil {
 		return nil, err
 	}
 	store := sessions.Store{ConfigDir: a.cfg.ConfigDir}
@@ -166,7 +168,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		return nil, &acp.Error{Code: acp.ErrorCodeInternalError, Message: fmt.Sprintf("Forking the session: %v", err)}
 	}
 	o.Resume = fork
-	s, err := a.start(ctx, fork, o)
+	s, err := a.start(ctx, fork, o, lastModel(ms))
 	if err != nil {
 		// The fork's transcript, made for a session that never ran, goes
 		// with it rather than show in session/list.
@@ -178,6 +180,24 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 	a.out.after(s.id, s.cmds.sendAll)
 	modes, opts := s.cfg.state()
 	return &acp.ForkSessionResponse{SessionID: acp.SessionID(s.id), Modes: modes, ConfigOptions: opts}, nil
+}
+
+// lastModel is the model of the last assistant message of ms that the
+// model wrote, not claude ("<synthetic>"): the one claude resumes the
+// session on.
+func lastModel(ms []sessions.Message) string {
+	for _, m := range slices.Backward(ms) {
+		if m.Type != "assistant" {
+			continue
+		}
+		var msg struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(m.Message, &msg) == nil && msg.Model != "" && msg.Model != synthetic {
+			return msg.Model
+		}
+	}
+	return ""
 }
 
 // forkAt is the message a fork is cut after, from
