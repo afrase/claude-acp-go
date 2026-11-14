@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"os"
 	"slices"
@@ -20,6 +21,14 @@ type Queued struct {
 	// Pending says it was still queued when the transcript ends; else
 	// claude took it into a running turn.
 	Pending bool
+	// ID is the uuid the SDK reads the prompt under, as a user message:
+	// the message it came from (source_uuid), else the attachment's. ""
+	// for a pending one.
+	ID string
+	// Meta says claude wrote it, not the user (isMeta).
+	Meta bool
+	// Notification says it is a task's end claude told the model of.
+	Notification bool
 }
 
 // QueuedPrompts returns what claude queued in session id that reached
@@ -92,13 +101,25 @@ func queuedOn(chain []*entry) (out []Queued, last string) {
 		case e.typ == "attachment":
 			var rec struct {
 				Attachment struct {
-					Type   string     `json:"type"`
-					Prompt promptText `json:"prompt"`
+					Type        string     `json:"type"`
+					Prompt      promptText `json:"prompt"`
+					SourceUUID  str        `json:"source_uuid"`
+					IsMeta      flag       `json:"isMeta"`
+					CommandMode str        `json:"commandMode"`
+					Origin      struct {
+						Kind    str             `json:"kind"`
+						Subkind json.RawMessage `json:"subkind"`
+					} `json:"origin"`
 				} `json:"attachment"`
 			}
 			if json.Unmarshal(e.raw, &rec) == nil && rec.Attachment.Type == "queued_command" {
-				if p := string(rec.Attachment.Prompt); p != "" {
-					out = append(out, Queued{Prompt: p, After: last})
+				a := rec.Attachment
+				if p := string(a.Prompt); p != "" {
+					// The SDK's: a task-notification origin with no subkind, or
+					// the command mode, marks a task's end; one with a subkind
+					// is a prompt delivered.
+					note := a.Origin.Kind == "task-notification" && a.Origin.Subkind == nil || a.Origin.Kind == "" && a.CommandMode == "task-notification"
+					out = append(out, Queued{Prompt: p, After: last, ID: cmp.Or(string(a.SourceUUID), e.uuid), Meta: bool(a.IsMeta), Notification: note})
 				}
 			}
 		}

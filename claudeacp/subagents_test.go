@@ -166,14 +166,18 @@ func TestSubagentEnds(t *testing.T) {
 }
 
 // A subagent's work before claude names its subagent waits within bounds:
-// past them it goes on the session; and a call that ends with claude
+// past them it goes on the session, and so do the later updates of the
+// tool calls that went there; and a call that ends with claude
 // never naming a subagent has its work go there too.
 func TestSubagentHeldBounds(t *testing.T) {
 	steps := []claudetest.Step{user("id2"), echo("id2"), agentCall(true)}
 	for i := range maxHeldPerCall + 8 {
 		steps = append(steps, subagentCall("toolu_p", fmt.Sprintf("toolu_%d", i)))
 	}
-	steps = append(steps, taskStarted(""), agentDone,
+	// The first call's tool_call went on the session: its result follows it.
+	steps = append(steps, taskStarted(""),
+		sendf(`{"type":"user","parent_tool_use_id":"toolu_p","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_0","content":"a"}]}}`),
+		agentDone,
 		assistant(`{"type":"tool_use","id":"toolu_q","name":"Agent","input":{}}`), subagentCall("toolu_q", "toolu_x"),
 		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_q","content":"done"}]}}`),
 		result(names("id2")), claudetest.Send(idle))
@@ -190,6 +194,17 @@ func TestSubagentHeldBounds(t *testing.T) {
 	}
 	if on[string(sid)] != maxHeldPerCall+2 || on["a1"] != 7 {
 		t.Errorf("calls by session: %v", on)
+	}
+	ended := false
+	for _, n := range p.notes() {
+		if u := n.Update.ToolCallUpdate; u != nil && u.ToolCallID == "toolu_0" && u.Status == "completed" {
+			if ended = n.SessionID == sid; !ended {
+				t.Errorf("toolu_0's tool_call is on the session, its end on %s", n.SessionID)
+			}
+		}
+	}
+	if !ended {
+		t.Error("toolu_0 never ended on the session")
 	}
 }
 
@@ -274,6 +289,53 @@ func TestSubagentAsks(t *testing.T) {
 	})
 }
 
+// Stopping a subagent stops the foreground subagents it waits on too:
+// what they ask is withdrawn with it, so they don't show running again
+// while they are being stopped.
+func TestSubagentStopNested(t *testing.T) {
+	release := make(chan struct{})
+	f := fake(user("id2"), echo("id2"), agentCall(false), taskStarted(""),
+		sendf(`{"type":"assistant","parent_tool_use_id":"toolu_p","message":{"id":"msg_s","content":[{"type":"tool_use","id":"toolu_q","name":"Agent",`+
+			`"input":{"description":"Inner","prompt":"go"}}]}}`),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"b2","tool_use_id":"toolu_q","parent_task_id":"a1","task_type":"local_agent","subagent_type":"general-purpose"}`),
+		canUseTool("toolu_s", "Bash", `{"command":"ls"}`, `,"agent_id":"b2"`),
+		// claude stops b2 with a1, withdrawing its request itself.
+		claudetest.Until(release),
+		sendf(`{"type":"control_cancel_request","request_id":"p_toolu_s"}`),
+		sendf(`{"type":"system","subtype":"task_notification","task_id":"b2","status":"stopped"}`),
+		taskEnd("stopped"), agentDone, result(names("id2")), claudetest.Send(idle))
+	f.Respond(`{"type":"control_request","request":{"subtype":"stop_task"}}`,
+		`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)
+	f.Respond(`{"type":"control_response","response":{"request_id":"p_toolu_s"}}`, `{"type":"keep_alive"}`)
+	p := start(t, withSubagents, f)
+	opened := make(chan struct{})
+	p.permit = func(ctx context.Context, _ *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+		close(opened)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	w := p.prompt(t, p.open(t), "go")
+	wait(t, opened, "the request")
+	if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "stop_task", func() bool { return len(asked(f)) > 0 })
+	close(release)
+	if got := stopReason(w); got != "end_turn" {
+		t.Fatal(got)
+	}
+	var states []string
+	for _, n := range p.notes() {
+		if su := n.Update.SubagentUpdate; su != nil && su.SessionID == "b2" && !su.Title.Present {
+			b, _ := json.Marshal(su.State)
+			states = append(states, string(b))
+		}
+	}
+	if want := []string{stateAsking, `{"state":"idle","stopReason":"cancelled"}`}; !slices.Equal(states, want) {
+		t.Errorf("b2's states %v, want %v", states, want)
+	}
+}
+
 // A subagent that ended runs again for a SendMessage that resumed it,
 // whose message is its next; or when claude says it runs, with no
 // message to show.
@@ -338,6 +400,116 @@ func TestSubagentAgain(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A resumed subagent keeps its task id and gets a newer run id, and may
+// get no task_started: a running update or a SendMessage's result is all
+// that says it runs. The newer run's frames are its run now, and its end
+// ends it; a start of a run before it is late.
+func TestSubagentNewerRun(t *testing.T) {
+	sendMessage := []claudetest.Step{
+		assistant(`{"type":"tool_use","id":"toolu_m","name":"SendMessage","input":{"to":"a1","message":"count again"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m","content":"sent"}]},` +
+			`"tool_use_result":{"success":true,"resumedAgentId":"a1"}}`),
+	}
+	running := sendf(`{"type":"system","subtype":"task_updated","task_id":"a1","run_id":"r2","patch":{"status":"running"}}`)
+	ends := sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","tool_use_id":"toolu_m","status":"completed"}`)
+	const endTurn = `{"state":"idle","stopReason":"end_turn"}`
+	for _, tc := range []struct {
+		name   string
+		again  []claudetest.Step
+		states []string
+		call   string // a line shape must have
+		absent string // and one it mustn't
+	}{
+		{"running", []claudetest.Step{running,
+			sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","status":"completed"}`)},
+			[]string{endTurn, stateRunning, endTurn}, "", ""},
+		{"SendMessage", append(slices.Clone(sendMessage), running, subagentCall("toolu_m", "toolu_2"), ends),
+			[]string{endTurn, stateRunning, endTurn}, "a1 update toolu_2 failed parent=toolu_m", ""},
+		{"a late start", []claudetest.Step{running,
+			sendf(`{"type":"system","subtype":"task_started","task_id":"a1","run_id":"r1","tool_use_id":"toolu_old","task_type":"local_agent"}`),
+			sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","status":"failed"}`)},
+			[]string{endTurn, stateRunning, `{"state":"idle","stopReason":"error"}`}, "", "a1 message toolu_old to a1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := []claudetest.Step{user("id2"), echo("id2"), agentCall(true), taskStarted(`,"run_id":"r1"`), agentDone,
+				sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r1","status":"completed"}`)}
+			steps = append(append(steps, tc.again...), result(names("id2")), claudetest.Send(idle))
+			p := start(t, withSubagents, fake(steps...))
+			sid := p.open(t)
+			if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+				t.Fatal(got)
+			}
+			if got := p.states(); !slices.Equal(got, tc.states) {
+				t.Errorf("states %v, want %v", got, tc.states)
+			}
+			if got := shape(p.notes(), sid); tc.call != "" && !slices.Contains(got, tc.call) {
+				t.Errorf("no %q in:\n%s", tc.call, strings.Join(got, "\n"))
+			}
+			if got := shape(p.notes(), sid); tc.absent != "" && slices.Contains(got, tc.absent) {
+				t.Errorf("%q in:\n%s", tc.absent, strings.Join(got, "\n"))
+			}
+		})
+	}
+}
+
+// Without subagent sessions, a subagent that ended runs again all the
+// same: the end of its next run ends the calls that run left open, and a
+// cancel of the turn spares it while it is in the background.
+func TestSubagentAgainWithoutSessions(t *testing.T) {
+	before := []claudetest.Step{user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), agentDone,
+		taskEnd("completed"),
+		assistant(`{"type":"tool_use","id":"toolu_m","name":"SendMessage","input":{"to":"a1","message":"count again"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m","content":"sent"}]},` +
+			`"tool_use_result":{"success":true,"resumedAgentId":"a1"}}`),
+	}
+	t.Run("its next end", func(t *testing.T) {
+		steps := append(slices.Clone(before), subagentCall("toolu_m", "toolu_2"),
+			sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_m","status":"stopped"}`),
+			result(names("id2")), claudetest.Send(idle))
+		p := start(t, nil, fake(steps...))
+		sid := p.open(t)
+		if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+			t.Fatal(got)
+		}
+		got := shape(p.notes(), sid)
+		want := []string{"s1 call toolu_2 Bash pending parent=toolu_m", "s1 update toolu_2 failed parent=toolu_m", "s1 usage human"}
+		if i := slices.Index(got, want[0]); i < 0 || !slices.Equal(got[i:], want) {
+			t.Errorf("got:\n%s\nwant at its end:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	})
+	t.Run("the turn cancelled", func(t *testing.T) {
+		opened, release := make(chan struct{}), make(chan struct{})
+		steps := append(slices.Clone(before), canUseTool("toolu_s", "Bash", `{"command":"ls"}`, `,"agent_id":"a1"`),
+			claudetest.Until(release), result(names("id2")), claudetest.Send(idle),
+			answers("toolu_s", `{"behavior":"allow"}`))
+		f := fake(steps...)
+		p := start(t, nil, f)
+		withdrawn := make(chan bool, 1)
+		p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+			close(opened)
+			<-release
+			withdrawn <- ctx.Err() != nil
+			return pick(optAllowOnce)(ctx, req)
+		}
+		sid := p.open(t)
+		w := p.prompt(t, sid, "go")
+		wait(t, opened, "the request")
+		if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: sid}); err != nil {
+			t.Fatal(err)
+		}
+		// The interrupt goes after the withdrawal, which then has had time
+		// to reach the client.
+		eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
+		close(release)
+		if got := stopReason(w); got != "cancelled" {
+			t.Fatal(got)
+		}
+		if <-withdrawn {
+			t.Error("the turn's cancel withdrew a resumed background subagent's request")
+		}
+	})
 }
 
 // When claude exits, a subagent still running ends with no reason given.
@@ -421,4 +593,66 @@ func (c *client) notes() []acp.SessionNotification {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.updates)
+}
+
+// A stop reaches the subagent and the foreground ones under it, through
+// foreground ones only.
+func TestSubagentStopsWith(t *testing.T) {
+	var k subagents
+	k.init("s1", true, func(string, acp.SessionUpdate) {})
+	for _, sa := range []*subagent{{id: "a"}, {id: "b", parent: "a"}, {id: "c", parent: "b"},
+		{id: "bg", parent: "a", background: true}, {id: "d", parent: "bg"}} {
+		k.byID[sa.id] = sa
+	}
+	for _, tc := range []struct {
+		agent, id string
+		want      bool
+	}{{"a", "a", true}, {"b", "a", true}, {"c", "a", true}, {"bg", "a", false}, {"d", "a", false},
+		{"bg", "bg", true}, {"d", "bg", true}, {"a", "b", false}, {"x", "a", false}} {
+		if got := k.stopsWith(tc.agent, tc.id); got != tc.want {
+			t.Errorf("stopsWith(%s, %s) = %v", tc.agent, tc.id, got)
+		}
+	}
+}
+
+// After session/resume, a SendMessage can resume a subagent that ran
+// before claude was restarted: its history names the call that started
+// it, which claude sends the run's work under, so the work goes to the
+// subagent's session.
+func TestSubagentResumedAfterRestart(t *testing.T) {
+	f := fake(user("id1"), echo("id1"),
+		assistant(`{"type":"tool_use","id":"toolu_m","name":"SendMessage","input":{"to":"a1","message":"count again"}}`),
+		subagentCall("toolu_A", "toolu_2"),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"a1","run_id":"r2","tool_use_id":"toolu_m","task_type":"local_agent","prompt":"count again"}`),
+		sendf(`{"type":"user","parent_tool_use_id":"toolu_A","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"1"}]}}`),
+		sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","tool_use_id":"toolu_m","status":"completed"}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m","content":"sent"}]},`+
+			`"tool_use_result":{"success":true,"resumedAgentId":"a1"}}`),
+		result(names("id1")), claudetest.Send(idle))
+	p := start(t, withSubagents, f)
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "Count"),
+		asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count","run_in_background":true}`)),
+		userRec("r1", resultBlocks("toolu_A", "Async agent launched", false)))
+	p.writeSubagent(t, cwd, sid, "a1", "toolu_A", userRec("s1", "count"), asstRec("s2", "msg_A1", textBlock("1")))
+	if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	got := shape(p.notes(), acp.SessionID(sid))
+	want := []string{
+		"s1 call toolu_m SendMessage pending",
+		`s1 subagent {"sessionId":"a1","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
+		"a1 message toolu_m to a1",
+		"a1 call toolu_2 Bash pending parent=toolu_A",
+		"a1 update toolu_2 completed parent=toolu_A",
+		`s1 subagent {"sessionId":"a1","state":{"state":"idle","stopReason":"end_turn"}}`,
+		"s1 update toolu_m completed",
+		"s1 usage human",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }

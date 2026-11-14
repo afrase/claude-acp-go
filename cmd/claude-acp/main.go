@@ -7,8 +7,11 @@
 //	claude-acp -version   print the version
 //
 // The claude it runs is $CLAUDE_CODE_EXECUTABLE, else claude on PATH. It
-// logs to stderr, never a prompt or a token. SIGTERM and SIGINT close
-// every session, as the end of stdin does.
+// logs to stderr. Its own lines never carry a prompt or a token, but what
+// claude writes on its stderr is passed on as claude wrote it (each line
+// cut at 1 KiB, a few a second): claude's errors, or its debug output
+// when the environment turns that on, may quote a prompt. SIGTERM and
+// SIGINT close every session, as the end of stdin does.
 package main
 
 import (

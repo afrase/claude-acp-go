@@ -86,6 +86,11 @@ type Subagent struct {
 	// WorktreePath is the worktree claude made for it (the Agent tool's
 	// isolation), while that worktree stands.
 	WorktreePath string
+	// Background says claude ran it in the background, whatever the call
+	// that started it asked: its call's result is then no end of it.
+	Background bool
+	// StoppedByUser says the user stopped it.
+	StoppedByUser bool
 
 	path string
 }
@@ -153,11 +158,15 @@ func withMeta(a Subagent) Subagent {
 		ToolUseID     str `json:"toolUseId"`
 		ParentAgentID str `json:"parentAgentId"`
 		WorktreePath  str `json:"worktreePath"`
+		RequestShape  str `json:"requestShape"`
+		StoppedByUser any `json:"stoppedByUser"` // true alone counts, as the SDK has it
 	}
 	if json.Unmarshal(data, &meta) != nil {
 		return a
 	}
 	a.ParentToolUseID, a.ParentAgentID, a.WorktreePath = string(meta.ToolUseID), string(meta.ParentAgentID), string(meta.WorktreePath)
+	stopped, _ := meta.StoppedByUser.(bool)
+	a.Background, a.StoppedByUser = meta.RequestShape == "background", stopped
 	return a
 }
 

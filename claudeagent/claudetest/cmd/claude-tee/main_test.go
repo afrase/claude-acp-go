@@ -16,8 +16,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
 )
@@ -205,10 +207,61 @@ func TestNotRecorded(t *testing.T) {
 	}
 }
 
+// A frame's time is taken as it is written, so the frames' times go up
+// in the file's order even when one copier is held between the two: here
+// the first frame's clock reading waits while the other copier records.
+func TestRecordTimeInOrder(t *testing.T) {
+	var out bytes.Buffer
+	start := time.Now()
+	var mu sync.Mutex
+	ticks := 0
+	reading, release := make(chan struct{}), make(chan struct{})
+	c := &cassette{w: &out, start: start, clock: func() time.Time {
+		mu.Lock()
+		ticks++
+		n := ticks
+		mu.Unlock()
+		if n == 1 {
+			close(reading)
+			<-release
+		}
+		return start.Add(time.Duration(n) * time.Millisecond)
+	}}
+	first := make(chan struct{})
+	go func() {
+		c.record("in", []byte(`{"type":"user"}`))
+		close(first)
+	}()
+	<-reading
+	second := make(chan struct{})
+	go func() {
+		c.record("out", []byte(`{"type":"assistant"}`))
+		close(second)
+	}()
+	select {
+	case <-second: // the second frame didn't wait for the first's
+	case <-time.After(100 * time.Millisecond): // it waits for the lock the first holds
+	}
+	close(release)
+	<-first
+	<-second
+	var last int64
+	for line := range strings.Lines(out.String()) {
+		var f claudetest.Frame
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			t.Fatal(err)
+		}
+		if f.MS < last {
+			t.Errorf("time went back:\n%s", out.String())
+		}
+		last = f.MS
+	}
+}
+
 // claude gets the secrets; the cassette gets their names only.
 func TestRecordRedacts(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "cli.jsonl")
-	cmd := teeCmd(t, out, "--input-format=stream-json", "--mcp-config", `{"mcpServers":{"gh":{"command":"x","env":{"GH_TOKEN":"ghp_secret1"}}}}`,
+	cmd := teeCmd(t, out, "--input-format=stream-json", "--mcp-config", `{"mcpServers":{"gh":{"command":"x","env":{"GH_TOKEN":"ghp_secret1"},"args":["--token=secret4"]},"z":{"type":"http","url":"https://mcp.example.com/mcp?key=secret5"}}}`,
 		`--settings={"env":{"ANTHROPIC_API_KEY":"sk-secret2"}}`)
 	cmd.Stdin = strings.NewReader(`{"type":"control_request","request_id":"1","request":{"subtype":"mcp_set_servers","servers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"Bearer secret3"}}}}}` + "\n")
 	var stdout bytes.Buffer
@@ -220,7 +273,7 @@ func TestRecordRedacts(t *testing.T) {
 		t.Errorf("claude didn't get the frame as sent: %s", stdout.String())
 	}
 	c, raw := readCassette(t, out)
-	for _, s := range []string{"ghp_secret1", "sk-secret2", "secret3"} {
+	for _, s := range []string{"ghp_secret1", "sk-secret2", "secret3", "secret4", "secret5"} {
 		if strings.Contains(raw, s) {
 			t.Errorf("the cassette has %s:\n%s", s, raw)
 		}

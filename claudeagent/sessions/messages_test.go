@@ -135,7 +135,7 @@ func TestSubagents(t *testing.T) {
 	files := map[string]string{
 		"agent-b2.meta.json":                    `{"toolUseId":"toolu_b","agentType":"general-purpose","worktreePath":"/r/w"}`,
 		"agent-a1.meta.json":                    `not json`,
-		"workflows/run-1/agent-c3.meta.json":    `{"toolUseId":"toolu_c","parentAgentId":"b2"}`,
+		"workflows/run-1/agent-c3.meta.json":    `{"toolUseId":"toolu_c","parentAgentId":"b2","requestShape":"background","stoppedByUser":true}`,
 		"notes.txt":                             "x",
 		"agent-d4.json":                         "{}",
 		"workflows/run-1/agent-e5.jsonl.backup": "{}",
@@ -150,7 +150,8 @@ func TestSubagents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Subagent{{ID: "a1"}, {ID: "b2", ParentToolUseID: "toolu_b", WorktreePath: "/r/w"}, {ID: "c3", ParentToolUseID: "toolu_c", ParentAgentID: "b2"}}
+	want := []Subagent{{ID: "a1"}, {ID: "b2", ParentToolUseID: "toolu_b", WorktreePath: "/r/w"},
+		{ID: "c3", ParentToolUseID: "toolu_c", ParentAgentID: "b2", Background: true, StoppedByUser: true}}
 	if len(got) != len(want) {
 		t.Fatalf("Subagents = %+v", got)
 	}

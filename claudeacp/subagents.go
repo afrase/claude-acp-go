@@ -8,6 +8,7 @@ import (
 	acp "github.com/afrase/acp-go/unstable"
 
 	"github.com/afrase/claude-acp-go/claudeagent"
+	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
 // Subagents as sessions of their own (ACP's subagents RFD), for a client
@@ -30,11 +31,13 @@ type subagent struct {
 	call       string // the call that started it, or ran it again last
 	run        string // claude's run of it now: a frame of an earlier one is late
 	on         string // the session it was announced on
+	parent     string // the subagent that started it, if one did
 	background bool   // a parent's cancel spares it
 	shown      bool   // announced to the client
 	asks       int    // its permission and question requests open
 	ended      bool
 	endedRuns  map[string]bool // the calls whose run of it has ended
+	last       acp.StateUpdate // the state the client was told of last
 }
 
 // subagents are a session's subagents, and the way every update of a
@@ -52,10 +55,16 @@ type subagents struct {
 	held   map[string][]acp.SessionUpdate // a call's work, until claude says whose it is
 	order  []string                       // held's calls, oldest first
 	nheld  int
+	// onRoot are the tool calls of a subagent's stream whose tool_call
+	// went on the session, held past the bounds: their updates follow it
+	// there, until they end.
+	onRoot map[string]bool
 }
 
-// The bounds of held, as claude-agent-acp's: calls, updates in all, and
-// updates of one call.
+// The bounds of held, with claude-agent-acp's numbers: calls, updates in
+// all, and updates of one call. Past them claude-agent-acp drops the
+// newest; here the oldest goes on the session, as a client without
+// subagents has it, and the later updates of its tool calls go there too.
 const (
 	maxHeldCalls   = 64
 	maxHeld        = 256
@@ -65,6 +74,7 @@ const (
 func (k *subagents) init(sid string, children bool, send func(string, acp.SessionUpdate)) {
 	k.sid, k.children, k.send = sid, children, send
 	k.byID, k.byCall, k.held = map[string]*subagent{}, map[string]*subagent{}, map[string][]acp.SessionUpdate{}
+	k.onRoot = map[string]bool{}
 }
 
 // emit sends an update of the stream of call parent ("" at the top): a
@@ -77,6 +87,13 @@ func (k *subagents) emit(parent string, u acp.SessionUpdate) {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if id, end := toolCallOf(u); k.onRoot[id] {
+		if end {
+			delete(k.onRoot, id)
+		}
+		k.send(k.sid, u)
+		return
+	}
 	if sa := k.byCall[parent]; sa != nil && sa.shown {
 		k.send(sa.id, u)
 		return
@@ -99,11 +116,31 @@ func (k *subagents) emit(parent string, u acp.SessionUpdate) {
 // flushLocked sends the work held for call to session to.
 func (k *subagents) flushLocked(call, to string) {
 	for _, u := range k.held[call] {
+		if id, end := toolCallOf(u); id != "" && to == k.sid {
+			if end {
+				delete(k.onRoot, id)
+			} else {
+				k.onRoot[id] = true
+			}
+		}
 		k.send(to, u)
 	}
 	k.nheld -= len(k.held[call])
 	delete(k.held, call)
 	k.order = slices.DeleteFunc(k.order, func(c string) bool { return c == call })
+}
+
+// toolCallOf is the tool call u is of, if it is one's, and whether it
+// ends it.
+func toolCallOf(u acp.SessionUpdate) (id string, end bool) {
+	var st acp.ToolCallStatus
+	switch {
+	case u.ToolCall != nil:
+		id, st = string(u.ToolCall.ToolCallID), u.ToolCall.Status
+	case u.ToolCallUpdate != nil:
+		id, st = string(u.ToolCallUpdate.ToolCallID), u.ToolCallUpdate.Status
+	}
+	return id, st == acp.ToolCallStatusCompleted || st == acp.ToolCallStatusFailed
 }
 
 // release sends what is held for call on the session: the call has ended
@@ -147,6 +184,34 @@ func (k *subagents) inBackground(agent string) bool {
 	return sa != nil && sa.background && !sa.ended
 }
 
+// stopsWith says the subagent agent stops when claude stops the subagent
+// id: it is id, or one id waits on, a foreground subagent of a foreground
+// subagent of id and so on. A background one runs on.
+func (k *subagents) stopsWith(agent, id string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	sa := k.byID[agent]
+	for range len(k.byID) { // a cycle can't hold it
+		switch {
+		case sa == nil:
+			return false
+		case sa.id == id:
+			return true
+		case sa.background:
+			return false
+		}
+		sa = k.byID[sa.parent]
+	}
+	return false
+}
+
+// known says the subagent id is known, run or replayed here.
+func (k *subagents) known(id string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.byID[id] != nil
+}
+
 // shownChild says the child session id is one of these subagents'.
 func (k *subagents) shownChild(id string) bool {
 	k.mu.Lock()
@@ -162,18 +227,26 @@ type launch struct {
 	SubagentType string `json:"subagent_type"`
 	Prompt       string `json:"prompt"`
 	Message      string `json:"message"` // a SendMessage's
+	To           string `json:"to"`      // a SendMessage's
 	Background   bool   `json:"run_in_background"`
 	TaskID       string `json:"task_id"` // a TaskStop's
 }
 
 // started is claude starting a subagent's task, for the call whose input
 // is in, of the stream stream. A new one is announced; one that ran
-// before runs again for the call that started it now.
-func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string) {
+// before runs again for the call that started it now. from is what the
+// session's history says of a subagent this process hasn't seen, which a
+// SendMessage resumes after a restart: claude sends that run's work
+// under the call that first started it.
+func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string, from sessions.Subagent) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if sa := k.byID[m.TaskID]; sa != nil {
-		sa.run, sa.background = m.RunID, m.IsBackgrounded
+		if late(sa, m.RunID) {
+			return // the start of a run before the one claude runs now
+		}
+		adopt(sa, m.RunID)
+		sa.background = m.IsBackgrounded
 		k.againLocked(sa, m.ToolUseID, cmp.Or(m.Prompt, in.Message, in.Prompt))
 		return
 	}
@@ -182,16 +255,27 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 	if sa.call != "" {
 		k.byCall[sa.call] = sa
 	}
+	launched := from.ParentToolUseID
+	if launched != "" && k.byCall[launched] == nil {
+		k.byCall[launched] = sa
+	}
+	p := cmp.Or(k.byID[m.ParentTaskID], k.byID[from.ParentAgentID], k.byCall[stream])
+	if p != nil {
+		sa.parent = p.id
+	}
 	if !k.children {
 		return
 	}
 	// A subagent's subagent is announced on its parent's child.
 	sa.on = k.sid
-	if p := cmp.Or(k.byID[m.ParentTaskID], k.byCall[stream]); p != nil && p.shown {
+	if p != nil && p.shown {
 		sa.on = p.id
 	}
 	k.announceLocked(sa, in, m.SubagentType, m.Description)
-	k.delegatedLocked(sa, sa.call, cmp.Or(in.Prompt, m.Prompt))
+	k.delegatedLocked(sa, sa.call, cmp.Or(in.Prompt, m.Prompt, in.Message))
+	if launched != "" && k.byCall[launched] == sa {
+		k.flushLocked(launched, sa.id)
+	}
 }
 
 // announceLocked tells the client of the subagent sa, on the session
@@ -215,7 +299,7 @@ func (k *subagents) announceLocked(sa *subagent, in launch, role, description st
 		su.Description = acp.Nullable[string]{Value: &d, Present: true}
 	}
 	k.send(sa.on, acp.SessionUpdate{SessionUpdate: "subagent_update", SubagentUpdate: su})
-	sa.shown = true
+	sa.shown, sa.last = true, acp.StateUpdate{Running: &acp.RunningStateUpdate{}}
 }
 
 // againLocked is the subagent sa running again for call (a SendMessage's,
@@ -232,11 +316,15 @@ func (k *subagents) againLocked(sa *subagent, call, prompt string) {
 		sa.call = call
 		k.byCall[call] = sa
 	}
+	// It runs again whether or not the client sees it: its next end must
+	// count, and a cancel of the turn must spare it if it is in the
+	// background.
+	wasEnded := sa.ended
+	sa.ended = false
 	if !sa.shown {
 		return
 	}
-	if sa.ended {
-		sa.ended = false
+	if wasEnded {
 		k.childStateLocked(sa, acp.StateUpdate{Running: &acp.RunningStateUpdate{}})
 	}
 	if fresh {
@@ -262,6 +350,7 @@ func (k *subagents) delegatedLocked(sa *subagent, call, prompt string) {
 
 // childStateLocked tells the client the subagent sa's state.
 func (k *subagents) childStateLocked(sa *subagent, st acp.StateUpdate) {
+	sa.last = st
 	k.send(sa.on, acp.SessionUpdate{SessionUpdate: "subagent_update", SubagentUpdate: &acp.SubagentUpdate{
 		SessionID: acp.SessionID(sa.id), State: stateOf(st)}})
 }

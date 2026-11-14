@@ -20,6 +20,16 @@ func TestRedactJSON(t *testing.T) {
 		{"no secrets, order kept", `{"type":"user","b":1,"a":2}`, `{"type":"user","b":1,"a":2}`, false},
 		{"empty env", `{"env":{}}`, `{"env":{}}`, false},
 		{"not JSON", `"env": {`, `"env": {`, false},
+		{"a url's credentials", `{"mcpServers":{"z":{"type":"http","url":"https://user:pw@mcp.example.com/s/p/mcp?api_key=S1&x=1&access_token=S2"}}}`,
+			`{"mcpServers":{"z":{"type":"http","url":"https://redacted@mcp.example.com/s/p/mcp?api_key=redacted&x=1&access_token=redacted"}}}`, true},
+		{"a url without", `{"url":"https://mcp.example.com/mcp?x=1"}`, `{"url":"https://mcp.example.com/mcp?x=1"}`, false},
+		{"args", `{"s":{"command":"x","args":["--token=S1","--api-key","S2","-v","GITHUB_PAT=S3","--header","Authorization: Bearer S4","https://h/mcp?key=S5","--port","8080","plain"]}}`,
+			`{"s":{"args":["--token=<redacted>","--api-key","<redacted>","-v","GITHUB_PAT=<redacted>","--header","Authorization: <redacted>","https://h/mcp?key=redacted","--port","8080","plain"],"command":"x"}}`, true},
+		{"args in a flag's value", `{"args":["--header=X-Api-Key: S1","--env=SECRET_THING=S2","--url=https://h?token=S3"]}`,
+			`{"args":["--header=X-Api-Key: <redacted>","--env=SECRET_THING=<redacted>","--url=https://h?token=redacted"]}`, true},
+		{"args without", `{"args":["-y","@scope/server","--port","8080","mode=fast"]}`, `{"args":["-y","@scope/server","--port","8080","mode=fast"]}`, false},
+		{"redacted already", `{"url":"https://redacted@h?key=redacted","args":["--token=<redacted>","--key","<redacted>","A=<redacted>"]}`,
+			`{"url":"https://redacted@h?key=redacted","args":["--token=<redacted>","--key","<redacted>","A=<redacted>"]}`, false},
 		{"plain text", `hello`, `hello`, false},
 	}
 	for _, tt := range tests {
