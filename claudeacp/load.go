@@ -99,6 +99,7 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 		if s, err = a.start(ctx, id, o, lastModel(ms)); err != nil {
 			return nil, err
 		}
+		s.title.heardBefore(ms)
 	}
 	if replay {
 		s.replay(ms, t)
@@ -169,6 +170,9 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 	}
 	o.Resume = fork
 	s, err := a.start(ctx, fork, o, lastModel(ms))
+	if err == nil {
+		s.title.heardBefore(ms)
+	}
 	if err != nil {
 		// The fork's transcript, made for a session that never ran, goes
 		// with it rather than show in session/list.
