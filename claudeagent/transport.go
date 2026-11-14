@@ -104,6 +104,7 @@ func (t *transport) messages() <-chan Message { return t.msgs }
 func (t *transport) readStdout(maxLine int) {
 	defer close(t.stdoutDone)
 	defer close(t.msgs)
+	defer func() { _ = t.stdout.Close() }() // its descriptor, now: not at GC; giveUp's may come first
 	lines := newLineReader(t.stdout, maxLine)
 	for {
 		line, over, err := lines.next()
@@ -160,6 +161,7 @@ func (t *transport) message(line []byte, over int) Message {
 
 func (t *transport) readStderr() {
 	defer close(t.stderrDone)
+	defer func() { _ = t.errOut.Close() }()
 	lines := newLineReader(t.errOut, 1<<20)
 	for {
 		line, over, err := lines.next()
@@ -186,6 +188,7 @@ func (t *transport) readStderr() {
 // after a second.
 func (t *transport) waitExit() {
 	t.exitErr = t.proc.Wait()
+	_ = t.closeInput() // nothing reads it now
 	close(t.exited)
 	t.giveUp(t.errOut, 200*time.Millisecond, t.stderrDone, "stderr")
 	close(t.done)

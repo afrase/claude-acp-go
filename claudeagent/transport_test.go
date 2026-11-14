@@ -177,6 +177,25 @@ func TestTransportWriteAndEOF(t *testing.T) {
 	}
 }
 
+// Once claude has exited and its output is read, its pipes are closed,
+// not left to the GC, though no one called Close.
+func TestTransportClosesPipes(t *testing.T) {
+	tr, _, _ := helper(t, "fail", Options{Stderr: func(string) {}})
+	for range tr.messages() {
+		continue
+	}
+	_ = tr.wait()
+	if _, err := tr.proc.Stdout.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("stdout: %v", err)
+	}
+	if _, err := tr.proc.Stderr.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("stderr: %v", err)
+	}
+	if _, err := tr.proc.Stdin.Write([]byte("\n")); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("stdin: %v", err)
+	}
+}
+
 // claude still running 2 s after EOF gets SIGTERM.
 func TestTransportTerm(t *testing.T) {
 	tr, c, _ := helper(t, "linger", Options{})
