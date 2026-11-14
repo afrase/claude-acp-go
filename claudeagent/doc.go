@@ -31,6 +31,24 @@
 // detected from what claude says it supports (its answer to initialize),
 // never from its version.
 //
+// # Environment
+//
+// claude runs with Options.Env (this process's environment when nil),
+// edited so it runs as the package expects:
+//
+//   - CLAUDECODE is removed, so claude doesn't take itself for one run
+//     inside Claude Code; NODE_OPTIONS too, which isn't meant for it.
+//   - CLAUDE_AGENT_SDK_VERSION, CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH and
+//     CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH are removed: they say an
+//     official SDK runs claude, or that its host refreshes tokens, which
+//     this package never does.
+//   - CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS is always 1, for the
+//     SessionState messages.
+//   - CLAUDE_AGENT_SDK_CLIENT_APP is Options.ClientApp when set; else
+//     the environment's, else "claudeagent-go/" and Version.
+//   - CLAUDE_CODE_ENTRYPOINT is sdk-cli unless the environment sets it.
+//   - PWD is Options.Cwd, when set.
+//
 // # Processes
 //
 // Each session is one claude process, started in a process group of its

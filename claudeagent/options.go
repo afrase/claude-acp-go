@@ -59,7 +59,7 @@ type MCPServer struct {
 type Options struct {
 	CLIPath string   // "" = claude, looked up on Env's PATH
 	Cwd     string   // "" = this process's
-	Env     []string // nil = os.Environ(); edited as the package doc says
+	Env     []string // nil = os.Environ(); edited as the package doc's Environment says
 
 	// Model is the model to start with, an alias ("opus") or an id; "" =
 	// claude's default. SetModel switches it later.
@@ -238,17 +238,9 @@ func extraArg(k string) error {
 	return nil
 }
 
-// environ is claude's environment for o.
-//
-//   - CLAUDECODE goes, so claude doesn't take itself for one run inside
-//     Claude Code; NODE_OPTIONS too, which isn't meant for it.
-//   - What says an official SDK runs it goes (CLAUDE_AGENT_SDK_VERSION),
-//     and so does what says this host refreshes tokens: it never does.
-//   - CLAUDE_CODE_ENTRYPOINT is sdk-cli unless set: claude's own value for
-//     a run in print mode with no official SDK.
-//   - CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS turns on SessionState messages.
-//   - CLAUDE_AGENT_SDK_CLIENT_APP names the app in claude's User-Agent.
-//   - PWD is Cwd, when set.
+// environ is claude's environment for o, edited as the package doc's
+// Environment section says. CLAUDE_CODE_ENTRYPOINT's sdk-cli is claude's
+// own value for a run in print mode with no official SDK.
 func environ(o Options) []string {
 	base := o.Env
 	if base == nil {
