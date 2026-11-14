@@ -3,6 +3,7 @@ package claudeacp
 import (
 	"encoding/json"
 	"regexp"
+	"strings"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -96,11 +97,63 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 		r.s.log.Info("replaying a subagent", "agent", a.ID, "err", err)
 		return
 	}
+	ms = stripFork(ms)
 	r.linkResults(ms)
 	if qs, err := store.SubagentQueuedPrompts(r.s.id, r.cwd, a.ID); err == nil {
 		r.place(qs, ms)
 	}
 	r.messages(ms, call)
+}
+
+// What claude writes before a fork child's directive, and the directive's
+// start ("subagent_type": "fork").
+const (
+	forkOpen      = "<fork-boilerplate>"
+	forkDirective = "</fork-boilerplate>\nYour directive: "
+)
+
+// stripFork is a subagent's transcript ms without what a fork child
+// inherits, as claude-agent-acp's stripForkPrefix has it: a fork's starts
+// with a copy of the message that launched it (that message's calls, the
+// fork's own among them) and their "Fork started" results beside the
+// directive message, all the parent's. It drops every message before the
+// directive and keeps the directive's prompt alone. Other transcripts
+// are as they were.
+func stripFork(ms []sessions.Message) []sessions.Message {
+	for i, m := range ms {
+		var msg claudeagent.APIMessage
+		if m.Type != "user" || json.Unmarshal(m.Message, &msg) != nil {
+			continue
+		}
+		var prompt []claudeagent.Block
+		directive := false
+		for _, b := range msg.Content {
+			if b.Type != "text" || !strings.HasPrefix(b.Text, forkOpen) {
+				continue
+			}
+			directive = true
+			if _, p, ok := strings.Cut(b.Text, forkDirective); ok {
+				prompt = append(prompt, claudeagent.Block{Type: "text", Text: p})
+			}
+		}
+		if !directive {
+			continue
+		}
+		rest := ms[i+1:]
+		if len(prompt) == 0 {
+			return rest
+		}
+		body, err := json.Marshal(struct {
+			Role    string              `json:"role"`
+			Content []claudeagent.Block `json:"content"`
+		}{"user", prompt})
+		if err != nil {
+			return rest
+		}
+		m.Message, m.Raw = body, nil
+		return append([]sessions.Message{m}, rest...)
+	}
+	return ms
 }
 
 // called is a call's result, for what it says of a subagent: the end of

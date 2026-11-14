@@ -1,6 +1,7 @@
 package claudeacp
 
 import (
+	"cmp"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -28,7 +29,7 @@ type replayer struct {
 	s       *session
 	cwd     string                       // where the transcript was found
 	agents  map[string]sessions.Subagent // subagents' transcripts, by the call that started each
-	calls   map[string]*tool             // calls shown, until their results
+	calls   map[callKey]*tool            // calls shown, until their results
 	inputs  map[string]launch            // what the calls that start, message or stop a subagent said
 	kids    []*replayedKid               // the subagents announced, in order
 	byID    map[string]*replayedKid      // the same, by id
@@ -36,10 +37,14 @@ type replayer struct {
 	queued  map[string][]string          // prompts claude kept other than as user messages, by the message before each
 }
 
+// callKey is a call of a replay by its stream and id: a stream's call
+// never takes another's, should a transcript repeat an id.
+type callKey struct{ stream, id string }
+
 // replay sends the client the session's history, ms, found in cwd's
 // history folder ("" for any).
 func (s *session) replay(ms []sessions.Message, cwd string) {
-	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[string]*tool{},
+	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
 		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{}, queued: map[string][]string{}}
 	if s.kids.children {
 		r.findAgents(ms)
@@ -58,8 +63,11 @@ const noResultText = "The history has no result for this call."
 // unanswered ends the calls the history shows with no result, as nothing
 // will end them now; a call the live session still runs is left to it.
 func (r *replayer) unanswered() {
-	for _, id := range slices.Sorted(maps.Keys(r.calls)) {
-		if t := r.calls[id]; !r.s.tools.running(t.id) {
+	keys := slices.SortedFunc(maps.Keys(r.calls), func(a, b callKey) int {
+		return cmp.Or(cmp.Compare(a.stream, b.stream), cmp.Compare(a.id, b.id))
+	})
+	for _, k := range keys {
+		if t := r.calls[k]; !r.s.tools.running(t.id) {
 			r.s.tools.show(t, report{status: acp.ToolCallStatusFailed, content: texts(noResultText)})
 		}
 	}
@@ -108,7 +116,7 @@ func (r *replayer) assistant(stream string, msg claudeagent.APIMessage) {
 		case isToolUse(b.Type):
 			r.toolUse(stream, b)
 		case strings.HasSuffix(b.Type, "_tool_result"):
-			r.toolResult(b, nil)
+			r.toolResult(stream, b, nil)
 		}
 	}
 }
@@ -128,7 +136,7 @@ func (r *replayer) user(stream string, m sessions.Message, msg claudeagent.APIMe
 	for _, b := range msg.Content {
 		switch b.Type {
 		case "tool_result":
-			r.toolResult(b, structured)
+			r.toolResult(stream, b, structured)
 		case "text":
 			r.notified(b.Text)
 			if text, ok := userText(b.Text); ok && stream == "" {
@@ -156,7 +164,7 @@ func (r *replayer) toolUse(stream string, b claudeagent.Block) {
 		return
 	}
 	t := &tool{id: b.ID, name: b.Name, parent: stream, whole: true}
-	r.calls[b.ID] = t
+	r.calls[callKey{stream, b.ID}] = t
 	rep := wholeReport(t.name, b.Input, r.s.tools.cwd)
 	var in launch
 	if json.Unmarshal(rep.rawInput, &in) == nil {
@@ -168,17 +176,18 @@ func (r *replayer) toolUse(stream string, b claudeagent.Block) {
 	}
 }
 
-// toolResult ends a call shown, completed or failed, and keeps what it
-// says of a subagent.
-func (r *replayer) toolResult(b claudeagent.Block, structured json.RawMessage) {
+// toolResult ends a call shown of the stream of call stream, completed or
+// failed, and keeps what it says of a subagent.
+func (r *replayer) toolResult(stream string, b claudeagent.Block, structured json.RawMessage) {
 	if r.s.plan.result(b, structured) {
 		return
 	}
-	t := r.calls[b.ToolUseID]
+	k := callKey{stream, b.ToolUseID}
+	t := r.calls[k]
 	if t == nil {
 		return
 	}
-	delete(r.calls, b.ToolUseID)
+	delete(r.calls, k)
 	r.s.tools.show(t, resultReport(t.name, b))
 	r.called(t, b, structured)
 }
