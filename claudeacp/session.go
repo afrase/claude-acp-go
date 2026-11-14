@@ -64,6 +64,7 @@ type session struct {
 	kids  subagents // its subagents, through which every update of a stream goes
 
 	cwd   string
+	setup string // the fingerprint of the setup it started with
 	cfg   config // its modes and options
 	cmds  commands
 	title titles
@@ -80,12 +81,13 @@ type session struct {
 }
 
 func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
-	o, err := a.options(setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers, systemPrompt: req.SystemPrompt, meta: req.Meta})
+	su := setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers, systemPrompt: req.SystemPrompt, meta: req.Meta}
+	o, err := a.options(su)
 	if err != nil {
 		return nil, err
 	}
 	o.SessionID = a.newID() // so the ACP session's id is claude's
-	s, err := a.start(ctx, o.SessionID, o, "")
+	s, err := a.start(ctx, o.SessionID, o, su, "")
 	if err != nil {
 		return nil, err
 	}
@@ -94,11 +96,11 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 	return &acp.NewSessionResponse{SessionID: acp.SessionID(s.id), Modes: modes, ConfigOptions: opts}, nil
 }
 
-// start runs claude for session id and opens the session once claude has
-// answered initialize. resumed is the model a resumed session's history
-// last ran on, which claude resumes it on.
-func (a *agent) start(ctx context.Context, id string, o claudeagent.Options, resumed string) (*session, error) {
-	s := &session{a: a, id: id, cwd: o.Cwd, log: a.log.With("session", id), read: make(chan struct{}), tick: make(chan struct{}), open: map[*ask]struct{}{}}
+// start runs claude for session id, set up as su asked (o), and opens
+// the session once claude has answered initialize. resumed is the model
+// a resumed session's history last ran on, which claude resumes it on.
+func (a *agent) start(ctx context.Context, id string, o claudeagent.Options, su setup, resumed string) (*session, error) {
+	s := &session{a: a, id: id, cwd: o.Cwd, setup: su.fingerprint(), log: a.log.With("session", id), read: make(chan struct{}), tick: make(chan struct{}), open: map[*ask]struct{}{}}
 	s.written = make(chan struct{})
 	close(s.written) // nothing to wait for
 	s.st.init()

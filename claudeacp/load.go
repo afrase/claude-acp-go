@@ -20,7 +20,8 @@ import (
 // is replayed), resume (without the history), and fork (a copy, resumed).
 // A session claude has no transcript of is resourceNotFound: clients
 // start a new session then, and may forget the old one. An open session
-// is answered as it is.
+// is answered as it is, unless the request sets it up otherwise (setup's
+// fingerprint): then claude is closed and resumes it so.
 
 // startError is what a failed start of claude says. A resume claude
 // ended on before it answered is resourceNotFound only when the session's
@@ -87,6 +88,14 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	a.waitClosed(id) // a claude still ending would write over the one resuming it
 	s, err := a.session(acp.SessionID(id))
 	open := err == nil
+	if open && s.setup != su.fingerprint() {
+		// The client moved the session (another folder, MCP servers or
+		// prompt): claude runs it again so, in the mode it was in, as
+		// claude-agent-acp does. Else claude would go on in the old setup.
+		o.PermissionMode = s.cfg.currentMode()
+		s.close() //nolint:contextcheck // closing runs to its end: the request's ctx doesn't bound it
+		open = false
+	}
 	var t *sessions.Transcript
 	var ms []sessions.Message
 	if !open || replay {
@@ -96,7 +105,7 @@ func (a *agent) reopen(ctx context.Context, id string, su setup, replay bool) (*
 	}
 	if !open {
 		o.Resume = id
-		if s, err = a.start(ctx, id, o, lastModel(ms)); err != nil {
+		if s, err = a.start(ctx, id, o, su, lastModel(ms)); err != nil {
 			return nil, err
 		}
 		s.title.heardBefore(ms)
@@ -141,8 +150,9 @@ func (a *agent) opening(id string) (unlock func()) {
 }
 
 func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*acp.ForkSessionResponse, error) {
-	o, err := a.options(setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers,
-		systemPrompt: req.SystemPrompt, meta: req.Meta})
+	su := setup{cwd: req.Cwd, dirs: req.AdditionalDirectories, mcpServers: req.MCPServers,
+		systemPrompt: req.SystemPrompt, meta: req.Meta}
+	o, err := a.options(su)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +179,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		return nil, &acp.Error{Code: acp.ErrorCodeInternalError, Message: fmt.Sprintf("Forking the session: %v", err)}
 	}
 	o.Resume = fork
-	s, err := a.start(ctx, fork, o, lastModel(ms))
+	s, err := a.start(ctx, fork, o, su, lastModel(ms))
 	if err == nil {
 		s.title.heardBefore(ms)
 	}

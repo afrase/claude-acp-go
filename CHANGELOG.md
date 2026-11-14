@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: a load or resume of an open session that sets it up otherwise (its folder, extra folders, MCP servers, system prompt, or `_meta`'s `claudeCode`, `systemPrompt` and `additionalRoots`) closes its claude and resumes it so, in the permission mode it was in, as claude-agent-acp does; claude went on in the old setup, editing the old folder.
 - `claudeacp`: a loaded, resumed or forked session with no title is titled from its conversation, its history included: claude made and kept a title from the first prompt after the load alone.
 - `claudeacp`: a loaded, resumed or forked session's model option says the model its history last ran on (not claude's `<synthetic>` messages'), which claude resumes it on, as claude-agent-acp reads it; it said the default until the first turn, so picking the default changed nothing.
 - `claudeacp`: a prompt's answer has `_meta.quota` as claude-agent-acp's does: `token_count` (the turn's usage) and `model_usage`, a row per model of what the turn's results added to claude's running `modelUsage` (the session's first result gives its own usage under its model).

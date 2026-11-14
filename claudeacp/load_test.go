@@ -289,3 +289,37 @@ func TestResumedModel(t *testing.T) {
 		}
 	}
 }
+
+// A resume of an open session set up otherwise (another folder here)
+// starts claude again so, in the mode the session was in; one set up the
+// same is answered as it is.
+func TestResumeMoved(t *testing.T) {
+	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
+	f1, f2 := fake(), fake()
+	f1.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, ok)
+	p := start(t, nil, f1, f2)
+	cwd, moved, sid := t.TempDir(), t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "hello"), asstRec("a1", "msg_1", textBlock("hi")))
+	resume := func(dir string) {
+		t.Helper()
+		if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: dir}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resume(cwd)
+	resume(cwd) // the same: nothing starts
+	if _, err := p.SetSessionMode(context.Background(), &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "plan"}); err != nil {
+		t.Fatal(err)
+	}
+	resume(moved)
+	select {
+	case <-f1.Exited():
+	default:
+		t.Error("the first claude runs on")
+	}
+	spec := f2.Spec()
+	args := strings.Join(spec.Args, " ")
+	if spec.Dir != moved || !strings.Contains(args, "--resume="+sid) || !strings.Contains(args, "--permission-mode=plan") {
+		t.Errorf("claude started in %s with %s", spec.Dir, args)
+	}
+}

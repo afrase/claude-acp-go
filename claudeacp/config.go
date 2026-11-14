@@ -92,6 +92,13 @@ func (c *config) init(o claudeagent.Options, ir *claudeagent.InitResponse, resum
 	}
 }
 
+// currentMode is the session's permission mode now.
+func (c *config) currentMode() claudeagent.PermissionMode {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mode
+}
+
 // resolve is the model option's value for id, a value or a model's id
 // (claude-opus-5-5): current when that is id's already, else the value
 // or the model it names, else the value id contains ("opus"); failing
