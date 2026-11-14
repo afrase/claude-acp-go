@@ -231,20 +231,26 @@ func TestCloseBeforeExit(t *testing.T) {
 // how it ended; an error answer fails it with claude's reason.
 func TestStartFails(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		steps []claudetest.Step
-		want  string
+		name   string
+		steps  []claudetest.Step
+		want   string
+		exited bool // ErrExitedBeforeInit
 	}{
 		{"exits", []claudetest.Step{claudetest.Expect(initRequest), claudetest.Exit(1, "No conversation found with session ID: s1\n")},
-			"claude ended before answering initialize: claude exited with code 1: No conversation found with session ID: s1"},
+			"claude ended before answering initialize: claude exited with code 1: No conversation found with session ID: s1", true},
+		{"exits with 0", []claudetest.Step{claudetest.Expect(initRequest), claudetest.Exit(0, "")},
+			"claude ended before answering initialize", true},
 		{"refuses", []claudetest.Step{claudetest.Expect(initRequest), claudetest.Send(`{"type":"control_response","response":{"subtype":"error","request_id":"$req","error":"bad hooks"}}`)},
-			"claude refused initialize: bad hooks"},
+			"claude refused initialize: bad hooks", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := claudetest.New(tc.steps...)
 			_, err := claudeagent.Start(context.Background(), claudeagent.Options{CLIPath: "/claude", Env: []string{}, Spawner: f.Spawn})
 			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
 				t.Fatalf("%v", err)
+			}
+			if errors.Is(err, claudeagent.ErrExitedBeforeInit) != tc.exited {
+				t.Errorf("errors.Is(%v, ErrExitedBeforeInit) = %v", err, !tc.exited)
 			}
 			<-f.Exited()
 		})

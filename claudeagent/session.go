@@ -46,10 +46,15 @@ type Session struct {
 	out   chan Message
 }
 
+// ErrExitedBeforeInit is Start's error when claude ended before it
+// answered initialize; an *ExitError beside it says how, unless claude
+// exited with 0.
+var ErrExitedBeforeInit = errors.New("claudeagent: claude ended before answering initialize")
+
 // Start starts claude, sends it the initialize request and returns once
 // claude has answered it, which can take a while: MCP servers start
 // first. ctx bounds the start only. If claude exits before it answers,
-// the error says how, with an *ExitError.
+// the error is ErrExitedBeforeInit, with an *ExitError that says how.
 func Start(ctx context.Context, o Options) (*Session, error) {
 	body, err := initRequest(o.Init)
 	if err != nil {
@@ -72,9 +77,9 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 			return nil, err // claude's refusal, or ctx's end, which say initialize
 		}
 		if werr := s.Wait(); werr != nil {
-			return nil, fmt.Errorf("claudeagent: claude ended before answering initialize: %w", werr)
+			return nil, fmt.Errorf("%w: %w", ErrExitedBeforeInit, werr)
 		}
-		return nil, errors.New("claudeagent: claude ended before answering initialize")
+		return nil, ErrExitedBeforeInit
 	}
 	r := new(InitResponse)
 	if len(raw) > 0 && string(raw) != "null" {

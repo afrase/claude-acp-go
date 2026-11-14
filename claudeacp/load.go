@@ -28,7 +28,7 @@ import (
 // end of its stderr, and the session is still there.
 func (a *agent) startError(resume, cwd string, err error) error {
 	var exit *claudeagent.ExitError
-	ended := errors.As(err, &exit) || strings.Contains(err.Error(), "ended before answering")
+	ended := errors.As(err, &exit) || errors.Is(err, claudeagent.ErrExitedBeforeInit)
 	if resume != "" && ended && a.transcriptGone(resume, cwd) {
 		return notFound(resume)
 	}
