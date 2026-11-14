@@ -145,7 +145,8 @@ Not supported:
 - **MCP servers over ACP's own transport.**
 - **The client's file-system and terminal capabilities.** claude's tools run
   on the machine, as in the terminal.
-- **Windows** is not tested.
+- **Windows** is not tested. The module builds there (CI checks that), but
+  the tests run on macOS and Linux only.
 
 ## How it relates to the others
 

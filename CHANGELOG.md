@@ -2,6 +2,10 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## Unreleased
+
+- The module builds on Windows again (`claudeagent/sessions` used Unix-only open flags; claude-tee Unix-only signals). `make check` and CI build and vet it for Windows; the tests still run on macOS and Linux only.
+
 ## v0.3.1 (2026-11-14)
 
 - Needs Go 1.27.4, which fixes GO-2026-6859 in `net/http`. `go install` then builds with the fixed standard library.

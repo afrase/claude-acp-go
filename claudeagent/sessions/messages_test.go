@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -188,9 +187,7 @@ func TestSubagentMetaThatIsAPipe(t *testing.T) {
 	agents := filepath.Join(project, id, "subagents")
 	transcript(t, project, id, text("user", "u", "", "hi"))
 	transcript(t, agents, "agent-a1", text("user", "a-u", "", "task"))
-	if err := syscall.Mkfifo(filepath.Join(agents, "agent-a1.meta.json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mkfifo(t, filepath.Join(agents, "agent-a1.meta.json"))
 	got, err := Store{ConfigDir: config}.Subagents(id, cwd)
 	if err != nil || len(got) != 1 || got[0].ParentToolUseID != "" {
 		t.Errorf("Subagents = %+v, %v", got, err)

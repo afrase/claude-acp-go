@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 )
 
 // Message is one user or assistant message of a transcript.
@@ -127,7 +126,7 @@ const maxMeta = 1 << 16
 // would hold the read for good.
 func (a *Subagent) readMeta() {
 	path := strings.TrimSuffix(a.path, ".jsonl") + ".meta.json"
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openRegular(path)
 	if err != nil {
 		return
 	}
