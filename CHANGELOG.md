@@ -9,6 +9,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeagent.ContextCategory` has `Kind` ("used", "free", "buffer", "deferred"), the field claude says to classify a category on, rather than its English name.
 - API change: `Session.CancelAsyncMessage` returns `(cancelled bool, err error)`. `cancelled` is false when claude had already taken the message (or folded it into a batch) and will act on it; before, nil said nothing about that.
 - `CanUseTool` may return `&Allow{…}` or `&Deny{…}`: a pointer was refused at run time as "no Allow or Deny", so the tool was denied.
+- An `Allow`'s `PermissionUpdate` built without `Destination` is sent with `DestinationSession`, and one that lacks what its type uses (`Rules` and `Behavior`, `Mode`, `Directories`) is refused with an error that names it: claude dropped such an update silently, so an "always allow" was never kept.
 
 ## v0.3.1 (2026-11-14)
 
