@@ -95,7 +95,7 @@ func (s *session) result(r *claudeagent.Result) {
 	}
 	end := ending{errorKind: s.st.errorKind, incomplete: incomplete,
 		login: s.st.login || r.IsError && strings.Contains(r.Result, "Please run /login")}
-	s.st.local, s.st.refused, s.st.login, s.st.counted = false, "", false, false
+	s.st.local, s.st.refused, s.st.login, s.st.counted, s.st.errorKind = false, "", false, false, ""
 	clear(s.st.noticed)
 	if s.fastState(r.FastModeState, r.FastModeDisabledReason) {
 		s.cfg.sendOptions()

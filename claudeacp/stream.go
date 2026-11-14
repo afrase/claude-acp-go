@@ -98,7 +98,11 @@ func (s *session) handle(m claudeagent.Message) {
 	case *claudeagent.TaskNotification:
 		s.taskNotification(m)
 	case *claudeagent.RateLimit:
-		s.usage(nil, map[string]any{"_claude/rateLimit": m.Info})
+		// Not before a message has counted the context, as
+		// claude-agent-acp: it would show the session at zero.
+		if s.st.used > 0 {
+			s.usage(nil, map[string]any{"_claude/rateLimit": m.Info})
+		}
 	}
 }
 
@@ -227,7 +231,13 @@ func (s *session) assistant(m *claudeagent.Assistant) {
 			s.st.login = true
 			return
 		}
-		s.st.model, s.st.errorKind = m.Message.Model, m.Error
+		// claude's own messages (an API error, a limit, a command's
+		// output) are "<synthetic>": the session's model is the last real
+		// one's, as claude-agent-acp keeps it. Their error still counts.
+		if m.Message.Model != synthetic {
+			s.st.model = m.Message.Model
+		}
+		s.st.errorKind = m.Error
 		if m.Message.StopReason == "refusal" {
 			s.refusal(m.Message.StopDetails, "")
 		}

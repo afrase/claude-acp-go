@@ -504,7 +504,7 @@ func (s *session) refusedNoFallback(m *claudeagent.ModelRefusalNoFallback) {
 // signIn says the message is the one claude writes in place of the
 // model's when it isn't signed in.
 func signIn(m *claudeagent.Assistant) bool {
-	if m.Message.Model != "<synthetic>" {
+	if m.Message.Model != synthetic {
 		return false
 	}
 	for _, b := range m.Message.Content {
@@ -514,3 +514,6 @@ func signIn(m *claudeagent.Assistant) bool {
 	}
 	return false
 }
+
+// synthetic is the model of the messages claude writes itself.
+const synthetic = "<synthetic>"

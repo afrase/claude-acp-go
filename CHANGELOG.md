@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: claude's own messages (`<synthetic>`: an API error, a limit) no longer become the session's model, so `usage_update` names the model that ran and the window is its, not the largest the result names. A failed turn's `errorKind` is its own, not the last turn's that had one. A rate limit's news before any message has counted the context sends no `usage_update`, which showed the session at zero.
 - `claudeacp`: a hook-blocked turn says why once. A result's text is shown, for a turn that showed none, only when the model wrote nothing (`output_tokens` 0) and no notice of the turn said it; a notice sent as text counts as text shown, as in claude-agent-acp.
 - `claudeacp`: an extension method it doesn't know is answered `Method not found` with `data.method`, as acp-go and claude-agent-acp answer one, where the message named the method and data was empty.
 - `claudeacp`: a prompt claude folded into a turn that waits for a steer is answered at the result that names it; it was left unanswered while claude sat idle.
