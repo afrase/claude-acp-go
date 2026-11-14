@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- API change: `claudeacp.Main` returns an error: what broke the connection to the client (logged too), nil when the client went or a signal ended the agent. `claude-acp` exits with 1 on it, where it exited 0. A signal now ends the agent through `Serve`'s ctx; the pipe Main put in front of stdin is gone, as acp-go's Close ends a connection on a blocking stdin.
 - Builds on acp-go v0.4.0. `claudeacp`: a Write over an existing empty file shows old text `""` rather than a new file; a tool call with no content says `"content":[]`, as claude-agent-acp does; a subagent that ends with no reason known is sent as acp-go's reasonless idle state; a client's message over the 64 MiB cap is skipped and answered rather than ending the connection.
 - The module builds on Windows (`claudeagent/sessions` used Unix-only open flags; claude-tee Unix-only signals). `make check` and CI build and vet it for Windows; the tests still run on macOS and Linux only.
 - `claudeagent.Decode` copies the line it is given, so a message's `Raw` no longer changes when the caller reuses its buffer (a `bufio.Scanner`'s, say).
