@@ -673,3 +673,30 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// What a subagent's stream was writing is forgotten once the subagent
+// ends: a long session doesn't keep every subagent's last message.
+func TestSubagentStreamForgotten(t *testing.T) {
+	stream := func(e string) claudetest.Step {
+		return sendf(`{"type":"stream_event","parent_tool_use_id":"toolu_p","event":` + e + `}`)
+	}
+	p := start(t, nil, fake(user("id2"), echo("id2"), agentCall(false), taskStarted(""),
+		stream(`{"type":"message_start","message":{"id":"msg_s"}}`),
+		stream(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_s","name":"Write","input":{}}}`),
+		stream(`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"content\":\"big\""}}`),
+		subagentCall("toolu_p", "toolu_t"),
+		taskEnd("completed"), agentDone, result(names("id2")), claudetest.Send(idle)))
+	sid := p.open(t)
+	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	s, _ := p.agent.session(sid)
+	// The prompt's answer came after the subagent's end was handled.
+	_, msgs := s.st.msgs["toolu_p"]
+	s.tools.mu.Lock()
+	_, streaming := s.tools.streaming["toolu_p"]
+	s.tools.mu.Unlock()
+	if msgs || streaming {
+		t.Errorf("kept: message %v, tool uses %v", msgs, streaming)
+	}
+}

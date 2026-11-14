@@ -59,10 +59,14 @@ func (s *session) taskNotification(m *claudeagent.TaskNotification) {
 }
 
 // taskEnded is the subagent id ending (subagents.ended), and its calls
-// still open with it, as nothing will end them now.
+// still open with it, as nothing will end them now. What its streams
+// were writing goes: a run of it again streams under another call.
 func (s *session) taskEnded(id, run, call, status, text string) {
 	if calls, ok := s.kids.ended(id, run, call, status, text); ok {
 		s.tools.endSubagent(id, calls)
+		for c := range calls {
+			delete(s.st.msgs, c)
+		}
 	}
 }
 
