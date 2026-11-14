@@ -18,7 +18,7 @@ func ExampleNew() {
 		claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
 		claudetest.ExpectEOF(),
 	)
-	s, err := claudeagent.Start(context.Background(), claudeagent.Options{CLIPath: "/usr/local/bin/claude", Spawner: fake.Spawn})
+	s, err := claudeagent.Start(context.Background(), claudeagent.Options{Spawner: fake.Spawn})
 	if err != nil {
 		fmt.Println(err)
 		return

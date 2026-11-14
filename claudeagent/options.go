@@ -1,6 +1,7 @@
 package claudeagent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,7 +58,7 @@ type MCPServer struct {
 // Options says how to run claude. The zero value runs the claude on PATH
 // in the current folder with claude's own defaults.
 type Options struct {
-	CLIPath string   // "" = claude, looked up on Env's PATH
+	CLIPath string   // "" = claude, looked up on Env's PATH; with a Spawner, passed to it as it is
 	Cwd     string   // "" = this process's
 	Env     []string // nil = os.Environ(); edited as the package doc's Environment says
 
@@ -121,7 +122,7 @@ type Options struct {
 	Stderr    func(line string)
 	ClientApp string       // names the app in claude's User-Agent, e.g. "myeditor/1.2"
 	MaxLine   int          // the longest stdout line read; 0 = 128 MiB
-	Spawner   Spawner      // nil = Exec
+	Spawner   Spawner      // nil = Exec; Spec.Path is then CLIPath unresolved ("claude" when "")
 	Log       *slog.Logger // nil = no log
 	// SharedGroup keeps claude in this process's group rather than one of
 	// its own (see Exec), for a program run by a supervisor that stops it
@@ -291,6 +292,10 @@ func spec(o Options) (Spec, error) {
 	env := environ(o)
 	path := o.CLIPath
 	switch {
+	case o.Spawner != nil:
+		// A Spawner may run no local program at all (a fake, a
+		// container): the name is its to resolve.
+		path = cmp.Or(path, "claude")
 	case path == "":
 		path = "claude"
 		fallthrough

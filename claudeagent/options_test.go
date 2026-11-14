@@ -2,6 +2,7 @@ package claudeagent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -135,6 +136,18 @@ func TestEnvironInherits(t *testing.T) {
 	env := environ(Options{})
 	if !slices.Contains(env, "CLAUDEAGENT_TEST_MARK=x") || slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "CLAUDECODE=") }) {
 		t.Errorf("%q", env)
+	}
+}
+
+// A Spawner gets CLIPath as it is: it may run no local claude, so none
+// need be installed.
+func TestSpecWithSpawnerNeedsNoClaude(t *testing.T) {
+	spawn := func(context.Context, Spec) (*Proc, error) { return nil, errors.ErrUnsupported }
+	for path, want := range map[string]string{"": "claude", "remote-claude": "remote-claude", "bin/claude": "bin/claude"} {
+		s, err := spec(Options{CLIPath: path, Spawner: spawn, Env: []string{"PATH=" + t.TempDir()}})
+		if err != nil || s.Path != want {
+			t.Errorf("CLIPath %q: %+v %v", path, s, err)
+		}
 	}
 }
 

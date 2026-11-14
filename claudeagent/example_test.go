@@ -24,7 +24,7 @@ func fakeClaude() *claudetest.Fake {
 // Query sends one prompt and yields claude's messages up to its result.
 func ExampleQuery() {
 	fake := fakeClaude()
-	o := claudeagent.Options{CLIPath: "/usr/local/bin/claude", Spawner: fake.Spawn}
+	o := claudeagent.Options{Spawner: fake.Spawn}
 	for m, err := range claudeagent.Query(context.Background(), "Say hello", o) {
 		if err != nil {
 			fmt.Println("error:", err)
@@ -51,7 +51,7 @@ func ExampleQuery() {
 func ExampleStart() {
 	ctx := context.Background()
 	fake := fakeClaude()
-	s, err := claudeagent.Start(ctx, claudeagent.Options{CLIPath: "/usr/local/bin/claude", Spawner: fake.Spawn})
+	s, err := claudeagent.Start(ctx, claudeagent.Options{Spawner: fake.Spawn})
 	if err != nil {
 		fmt.Println("error:", err)
 		return

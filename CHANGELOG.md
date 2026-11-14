@@ -12,6 +12,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - An `Allow`'s `PermissionUpdate` built without `Destination` is sent with `DestinationSession`, and one that lacks what its type uses (`Rules` and `Behavior`, `Mode`, `Directories`) is refused with an error that names it: claude dropped such an update silently, so an "always allow" was never kept.
 - `HookFunc`'s doc says hooks fail open: an error or a missed deadline lets the guarded action go ahead. New `HookMatcher.OnFailure` (`HookFailContinue`, `HookFailBlock`) is sent as claude's `onFailure`, so an erroring guard hook can block instead.
 - Docs: the package doc has an Environment section that lists what `claudeagent` removes from, sets in and defaults in claude's environment; `Options.Env` points to it.
+- With `Options.Spawner` set, `CLIPath` goes to the Spawner as it is (`"claude"` when empty) instead of being looked up on PATH, so a fake or remote Spawner works where claude isn't installed.
 
 ## v0.3.1 (2026-11-14)
 
