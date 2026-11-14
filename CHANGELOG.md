@@ -5,6 +5,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 ## Unreleased
 
 - `claudeacp`: a Write whose content claude took as `file_text` or `file_content`, and a Bash call whose description came as `command_description`, show that text, as claude-agent-acp shows it.
+- `claudeacp`: a Read of an image shows the image and a Read of a PDF a line naming the document, where an empty code block showed; a command's image output shows too. An API server tool's result (web search, web fetch, tool search, code execution) says what it found, where the call had no content.
 
 ## v0.3.1 (2026-11-14)
 

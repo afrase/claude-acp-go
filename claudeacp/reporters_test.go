@@ -2,6 +2,7 @@ package claudeacp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -83,17 +84,42 @@ func TestResultContent(t *testing.T) {
 		{"mcp__s__t", `[{"type":"text","text":"has ` + "```" + ` in it"}]`, true, "````\nhas ``` in it\n````"},
 		{"ToolSearch", `[{"type":"tool_reference","tool_name":"SendMessage"},{"type":"tool_reference","tool_name":"TaskStop"}]`, false, "Tool: SendMessage\n\nTool: TaskStop"},
 		{"mcp__s__t", `[{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "image image/png"},
+		// A Read of an image or a PDF shows the image, or a line for the
+		// document; a command's image output shows too.
+		{"Read", `[{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "image image/png"},
+		{"Read", `[{"type":"text","text":"PDF file read"},{"type":"document","title":"Spec","source":{"type":"base64","media_type":"application/pdf","data":"` + strings.Repeat("A", 2800) + `"}}]`, false,
+			"```\nPDF file read\n```" + ` + [document "Spec": application/pdf, 2.1 KB]`},
+		{"Read", `[{"type":"document","source":{"type":"url","url":"https://x/a.pdf"}}]`, false, "[document: https://x/a.pdf]"},
+		{"Bash", `[{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "image image/png"},
+		{"Bash", `[{"type":"text","text":"hi"},{"type":"image","source":{"type":"base64","data":"AAA","media_type":"image/png"}}]`, false, "hi + image image/png"},
+		{"mcp__s__t", `[{"type":"image","source":{"type":"url","url":"https://x/a.png"}}]`, false, "[image: https://x/a.png]"},
+		// An API server tool's result says what it found.
+		{"web_search", `[{"type":"web_search_result","title":"Go","url":"https://go.dev"},{"type":"web_search_result","title":"ACP","url":"https://acp.dev"}]`, false,
+			"Go (https://go.dev) + ACP (https://acp.dev)"},
+		{"web_search", `{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}`, false, "Error: max_uses_exceeded"},
+		{"web_fetch", `{"type":"web_fetch_result","url":"https://go.dev","content":{"type":"document"}}`, false, "Fetched: https://go.dev"},
+		{"tool_search_tool_regex", `{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"x"},{"type":"tool_reference","tool_name":"y"}]}`, false,
+			"Tools found: x, y"},
+		{"tool_search_tool_regex", `{"type":"tool_search_tool_result_error","error_code":"unavailable","error_message":"down"}`, false, "Error: unavailable - down"},
+		{"code_execution", `{"type":"bash_code_execution_result","stdout":"","stderr":"oops","return_code":1}`, false, "Output: oops"},
 	} {
 		content, ok := resultContent(tc.name, claudeagent.Block{Content: json.RawMessage(tc.result), IsError: tc.isError})
 		got := "-"
-		switch {
-		case !ok:
-		case len(content) == 1 && content[0].Content.Content.Text != nil:
-			got = content[0].Content.Content.Text.Text
-		case len(content) == 1 && content[0].Content.Content.Image != nil:
-			got = "image " + content[0].Content.Content.Image.MimeType
-		default:
-			got = "?"
+		if ok {
+			var parts []string
+			for _, c := range content {
+				switch {
+				case c.Content == nil:
+					parts = append(parts, "?")
+				case c.Content.Content.Text != nil:
+					parts = append(parts, c.Content.Content.Text.Text)
+				case c.Content.Content.Image != nil:
+					parts = append(parts, "image "+c.Content.Content.Image.MimeType)
+				default:
+					parts = append(parts, "?")
+				}
+			}
+			got = strings.Join(parts, " + ")
 		}
 		if got != tc.want {
 			t.Errorf("%s %s: %q, want %q", tc.name, tc.result, got, tc.want)

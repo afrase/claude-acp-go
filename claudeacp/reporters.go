@@ -154,23 +154,28 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 // resultContent is what a tool's result shows; ok false leaves the call's
 // content as it was (an edit's diff stays, and the hook's replaces it).
 func resultContent(name string, b claudeagent.Block) (content []acp.ToolCallContent, ok bool) {
-	text, images := resultParts(b.Content)
+	text, shown := resultParts(b.Content)
 	switch name {
 	case "Edit", "Write":
 		if !b.IsError {
 			return nil, false
 		}
 	case "Bash", "PowerShell":
-		if text == "" {
+		switch {
+		case shown != nil: // an image is no console output: it shows as any result's
+		case text == "":
 			return nil, false
-		}
-		if !b.IsError { // a failed or refused command is fenced as any error, as claude-agent-acp does for a client without terminals
+		case !b.IsError: // a failed or refused command is fenced as any error, as claude-agent-acp does for a client without terminals
 			return []acp.ToolCallContent{textContent(fence("console", text))}, true
 		}
 	case "Read":
 		if !b.IsError {
-			text = strings.Trim(reminders.ReplaceAllString(text, ""), "\n")
-			return []acp.ToolCallContent{textContent(fence("", text))}, true
+			// An image or a PDF is shown as itself, after any text.
+			if text = strings.Trim(reminders.ReplaceAllString(text, ""), "\n"); text != "" {
+				content = []acp.ToolCallContent{textContent(fence("", text))}
+			}
+			content = append(content, shown...)
+			return content, content != nil
 		}
 	case "Agent", "Task":
 		text = handedBack(strings.TrimSpace(usageBlock.ReplaceAllString(text, "")))
@@ -178,11 +183,7 @@ func resultContent(name string, b claudeagent.Block) (content []acp.ToolCallCont
 	if b.IsError && text != "" {
 		text = fence("", text)
 	}
-	content = texts(text)
-	for _, img := range images {
-		content = append(content, acp.ToolCallContent{Content: &acp.Content{Content: acp.ContentBlock{Image: &img}}})
-	}
-	return content, true
+	return append(texts(text), shown...), true
 }
 
 // handedBack is a foreground subagent's report out of the frame claude
@@ -205,22 +206,31 @@ func handedBack(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// resultParts reads a tool_result's content, a string or blocks: its
-// text, and its images.
-func resultParts(raw json.RawMessage) (string, []acp.ImageContent) {
+// resultParts reads a tool_result's content, a string, a block or
+// blocks: its text (and the tools ToolSearch loaded, as claude-agent-acp
+// shows them), and the rest as content to show after it: images, and a
+// line for each of what can't be shown (a document, an API server tool's
+// result), as claude-agent-acp shows them.
+func resultParts(raw json.RawMessage) (string, []acp.ToolCallContent) {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s, nil
 	}
 	var blocks []claudeagent.Block
-	_ = json.Unmarshal(raw, &blocks)
+	if json.Unmarshal(raw, &blocks) != nil {
+		var b claudeagent.Block
+		if json.Unmarshal(raw, &b) != nil || b.Type == "" {
+			return "", nil
+		}
+		blocks = []claudeagent.Block{b} // a server tool's single result
+	}
 	var parts []string
-	var images []acp.ImageContent
+	var shown []acp.ToolCallContent
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
 			parts = append(parts, b.Text)
-		case "tool_reference": // a tool ToolSearch loaded, shown as the adapter shows it
+		case "tool_reference": // a tool ToolSearch loaded
 			var ref struct {
 				ToolName string `json:"tool_name"`
 			}
@@ -229,15 +239,118 @@ func resultParts(raw json.RawMessage) (string, []acp.ImageContent) {
 			}
 		case "image":
 			var src struct {
+				Type      string `json:"type"`
 				Data      string `json:"data"`
 				MediaType string `json:"media_type"`
+				URL       string `json:"url"`
 			}
-			if json.Unmarshal(b.Source, &src) == nil && src.Data != "" {
-				images = append(images, acp.ImageContent{Data: src.Data, MimeType: src.MediaType})
+			_ = json.Unmarshal(b.Source, &src)
+			switch {
+			case src.Data != "":
+				shown = append(shown, acp.ToolCallContent{Content: &acp.Content{Content: acp.ContentBlock{Image: &acp.ImageContent{Data: src.Data, MimeType: src.MediaType}}}})
+			case src.Type == "url":
+				shown = append(shown, textContent("[image: "+src.URL+"]"))
+			default:
+				shown = append(shown, textContent("[image: file reference]"))
+			}
+		default:
+			if line := blockLine(b); line != "" {
+				shown = append(shown, textContent(line))
 			}
 		}
 	}
-	return strings.Join(parts, "\n\n"), images
+	return strings.Join(parts, "\n\n"), shown
+}
+
+// blockLine is a line saying what a result's block is, for one that can't
+// be shown as it is: a document (a PDF Read gives one) by its title, type
+// and size, never its data; an API server tool's result by what it found;
+// any other block as its JSON, as claude-agent-acp shows them.
+func blockLine(b claudeagent.Block) string {
+	var f struct {
+		Title  string `json:"title"`
+		URL    string `json:"url"`
+		Source struct {
+			Type      string `json:"type"`
+			MediaType string `json:"media_type"`
+			Data      string `json:"data"`
+			URL       string `json:"url"`
+		} `json:"source"`
+		ErrorCode      string `json:"error_code"`
+		ErrorMessage   string `json:"error_message"`
+		ToolReferences []struct {
+			ToolName string `json:"tool_name"`
+		} `json:"tool_references"`
+		Stdout       string   `json:"stdout"`
+		Stderr       string   `json:"stderr"`
+		IsFileUpdate bool     `json:"is_file_update"`
+		Lines        []string `json:"lines"`
+	}
+	_ = json.Unmarshal(b.Raw, &f) // a field of another type is left out
+	withMessage := func() string {
+		if f.ErrorMessage != "" {
+			return "Error: " + f.ErrorCode + " - " + f.ErrorMessage
+		}
+		return "Error: " + f.ErrorCode
+	}
+	switch b.Type {
+	case "document":
+		title := ""
+		if f.Title != "" {
+			title = " " + strconv.Quote(f.Title)
+		}
+		switch f.Source.Type {
+		case "url":
+			return "[document" + title + ": " + f.Source.URL + "]"
+		case "base64":
+			return "[document" + title + ": " + f.Source.MediaType + ", " + byteSize(len(f.Source.Data)*3/4) + "]"
+		case "text":
+			return "[document" + title + ": " + f.Source.MediaType + ", " + byteSize(len(f.Source.Data)) + "]"
+		}
+		return "[document" + title + "]"
+	case "tool_search_tool_search_result":
+		var names []string
+		for _, r := range f.ToolReferences {
+			names = append(names, r.ToolName)
+		}
+		return "Tools found: " + cmp.Or(strings.Join(names, ", "), "none")
+	case "tool_search_tool_result_error", "text_editor_code_execution_tool_result_error":
+		return withMessage()
+	case "web_search_result":
+		return f.Title + " (" + f.URL + ")"
+	case "web_fetch_result":
+		return "Fetched: " + f.URL
+	case "web_search_tool_result_error", "web_fetch_tool_result_error",
+		"code_execution_tool_result_error", "bash_code_execution_tool_result_error":
+		return "Error: " + f.ErrorCode
+	case "code_execution_result", "bash_code_execution_result":
+		return "Output: " + cmp.Or(f.Stdout, f.Stderr)
+	case "text_editor_code_execution_view_result":
+		var v struct {
+			Content string `json:"content"`
+		}
+		_ = json.Unmarshal(b.Raw, &v)
+		return v.Content
+	case "text_editor_code_execution_create_result":
+		if f.IsFileUpdate {
+			return "File updated"
+		}
+		return "File created"
+	case "text_editor_code_execution_str_replace_result":
+		return strings.Join(f.Lines, "\n")
+	}
+	return string(b.Raw)
+}
+
+// byteSize is n bytes for people to read: "312 B", "2.4 KB", "1.3 MB".
+func byteSize(n int) string {
+	switch {
+	case n < 1024:
+		return strconv.Itoa(n) + " B"
+	case n < 1024*1024:
+		return strconv.FormatFloat(float64(n)/1024, 'f', 1, 64) + " KB"
+	}
+	return strconv.FormatFloat(float64(n)/(1024*1024), 'f', 1, 64) + " MB"
 }
 
 // handBackStart and handBackEnd open a foreground subagent's report.
