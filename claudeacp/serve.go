@@ -47,6 +47,11 @@ type agent struct {
 	log    *slog.Logger
 	after  func(time.Duration) <-chan time.Time // the clock; tests give a fake one
 	newID  func() string                        // session and message ids; tests give counted ones
+	// pause, when a test sets it, runs at points of a prompt's way to
+	// claude: "register" as its turn is about to be queued (a prompt slow
+	// to set up), "write" as its user message is about to be written (a
+	// big one being encoded).
+	pause func(at string)
 
 	mu        sync.Mutex
 	caps      clientCaps
@@ -219,19 +224,20 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	case o := <-t.done:
 		return o.resp, o.err
 	case <-ctx.Done():
-		// The client withdrew the prompt: a cancel, as it would be in
-		// claude's terminal. When the client went instead, closing the
-		// session interrupts the turn, once (serve).
+		// The client withdrew the prompt ($/cancel_request): it alone
+		// stops, not the prompts queued after it. When the client went
+		// instead, closing the session interrupts the turn, once (serve).
 		if a.client.Err() == nil {
-			s.cancel()
+			s.withdrawTurn(t)
 		}
 		return nil, ctx.Err()
 	}
 }
 
-func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
+func (a *agent) Cancel(ctx context.Context, n *acp.CancelNotification) error {
 	if s, err := a.session(n.SessionID); err == nil {
-		s.cancel()
+		seq, _ := acp.SequenceFromContext(ctx)
+		s.cancel(seq)
 	} else if s := a.child(string(n.SessionID)); s != nil {
 		s.stopSubagent(string(n.SessionID)) // a subagent's session: that subagent alone
 	}

@@ -4,6 +4,8 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: a session/cancel sent right after a session/prompt cancels it, however soon after; it ran to `end_turn` when the cancel was handled before the prompt's turn was queued (it uses acp-go's `SequenceFromContext`). A cancel's drops and interrupt are written after the user messages of the turns they stop, never before; and the running turn's steers claude hasn't taken are dropped too, where claude ran them after the interrupt as a turn of their own.
+- `claudeacp`: withdrawing one prompt (`$/cancel_request`) stops that prompt alone: a queued one is dropped from claude's queue, the running one interrupted; the other prompts go on, where all were cancelled.
 - `claudeacp`: a cancel of the turn spares what a background subagent's own foreground subagents ask, as it spares the background subagent's: their requests were withdrawn, so claude was told to deny and interrupt them.
 - API change: `claudeacp.Main` returns an error: what broke the connection to the client (logged too), nil when the client went or a signal ended the agent. `claude-acp` exits with 1 on it, where it exited 0. A signal now ends the agent through `Serve`'s ctx; the pipe Main put in front of stdin is gone, as acp-go's Close ends a connection on a blocking stdin.
 - Builds on acp-go v0.4.0. `claudeacp`: a Write over an existing empty file shows old text `""` rather than a new file; a tool call with no content says `"content":[]`, as claude-agent-acp does; a subagent that ends with no reason known is sent as acp-go's reasonless idle state; a client's message over the 64 MiB cap is skipped and answered rather than ending the connection.
