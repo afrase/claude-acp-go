@@ -10,10 +10,14 @@
 // environment's names and claude's version) and then each line of stdin
 // and stdout as {"dir":"in"|"out","ms":…,"frame":…}. It never writes an
 // environment variable's value, which may be a secret, nor the values of
-// an "env" or "headers" object in an argument or frame (an MCP server's
-// tokens, the settings' env), only their names (redact.go). Other
-// secrets a client puts in claude's arguments or prompts are recorded
-// as they are: read a cassette before you share it. A line that isn't
+// an "env" or "headers" object in an argument or frame (an MCP server's,
+// the settings' env), only their names. In a "url" it takes out the
+// userinfo and the values of query parameters named like a key or token,
+// and in an MCP server's "args" the values of flags so named (--token=x,
+// --api-key x), of NAME=value pairs and of headers such as
+// "Authorization: Bearer x" (redact.go). The rest is recorded as it is:
+// a token in a URL's path, or one a client puts in claude's arguments
+// or prompts. Read a cassette before you share it. A line that isn't
 // JSON is kept as a JSON string. Claude's exit code is its own, and a
 // signal it gets goes on to claude; a signal that ends claude ends it too.
 //

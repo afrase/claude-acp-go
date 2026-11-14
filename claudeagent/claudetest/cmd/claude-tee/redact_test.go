@@ -22,6 +22,16 @@ func TestRedactJSON(t *testing.T) {
 		{"no secrets, order kept", `{"type":"user","b":1,"a":2}`, `{"type":"user","b":1,"a":2}`, false},
 		{"empty env", `{"env":{}}`, `{"env":{}}`, false},
 		{"not JSON", `"env": {`, `"env": {`, false},
+		{"a url's credentials", `{"mcpServers":{"z":{"type":"http","url":"https://user:pw@mcp.example.com/s/p/mcp?api_key=S1&x=1&access_token=S2"}}}`,
+			`{"mcpServers":{"z":{"type":"http","url":"https://redacted@mcp.example.com/s/p/mcp?api_key=redacted&x=1&access_token=redacted"}}}`, true},
+		{"a url without", `{"url":"https://mcp.example.com/mcp?x=1"}`, `{"url":"https://mcp.example.com/mcp?x=1"}`, false},
+		{"args", `{"s":{"command":"x","args":["--token=S1","--api-key","S2","-v","GITHUB_PAT=S3","--header","Authorization: Bearer S4","https://h/mcp?key=S5","--port","8080","plain"]}}`,
+			`{"s":{"args":["--token=<redacted>","--api-key","<redacted>","-v","GITHUB_PAT=<redacted>","--header","Authorization: <redacted>","https://h/mcp?key=redacted","--port","8080","plain"],"command":"x"}}`, true},
+		{"args in a flag's value", `{"args":["--header=X-Api-Key: S1","--env=SECRET_THING=S2","--url=https://h?token=S3"]}`,
+			`{"args":["--header=X-Api-Key: <redacted>","--env=SECRET_THING=<redacted>","--url=https://h?token=redacted"]}`, true},
+		{"args without", `{"args":["-y","@scope/server","--port","8080","mode=fast"]}`, `{"args":["-y","@scope/server","--port","8080","mode=fast"]}`, false},
+		{"redacted already", `{"url":"https://redacted@h?key=redacted","args":["--token=<redacted>","--key","<redacted>","A=<redacted>"]}`,
+			`{"url":"https://redacted@h?key=redacted","args":["--token=<redacted>","--key","<redacted>","A=<redacted>"]}`, false},
 		{"plain text", `hello`, `hello`, false},
 	}
 	for _, tt := range tests {
@@ -49,7 +59,7 @@ func TestRedactArgs(t *testing.T) {
 // claude gets the secrets; the cassette gets their names only.
 func TestRecordRedacts(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "cli.jsonl")
-	cmd := teeCmd(t, out, "--input-format=stream-json", "--mcp-config", `{"mcpServers":{"gh":{"command":"x","env":{"GH_TOKEN":"ghp_secret1"}}}}`,
+	cmd := teeCmd(t, out, "--input-format=stream-json", "--mcp-config", `{"mcpServers":{"gh":{"command":"x","env":{"GH_TOKEN":"ghp_secret1"},"args":["--token=secret4"]},"z":{"type":"http","url":"https://mcp.example.com/mcp?key=secret5"}}}`,
 		`--settings={"env":{"ANTHROPIC_API_KEY":"sk-secret2"}}`)
 	cmd.Stdin = strings.NewReader(`{"type":"control_request","request_id":"1","request":{"subtype":"mcp_set_servers","servers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"Bearer secret3"}}}}}` + "\n")
 	var stdout bytes.Buffer
@@ -61,7 +71,7 @@ func TestRecordRedacts(t *testing.T) {
 		t.Errorf("claude didn't get the frame as sent: %s", stdout.String())
 	}
 	c, raw := readCassette(t, out)
-	for _, s := range []string{"ghp_secret1", "sk-secret2", "secret3"} {
+	for _, s := range []string{"ghp_secret1", "sk-secret2", "secret3", "secret4", "secret5"} {
 		if strings.Contains(raw, s) {
 			t.Errorf("the cassette has %s:\n%s", s, raw)
 		}
