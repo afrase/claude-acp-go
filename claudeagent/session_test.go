@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -258,6 +259,24 @@ func TestStartFails(t *testing.T) {
 			<-f.Exited()
 		})
 	}
+}
+
+// claude gets its MCP servers in a file it reads as it starts, which is
+// gone once Start returns.
+func TestStartMCPConfig(t *testing.T) {
+	s, f := start(t, claudeagent.Options{MCPServers: map[string]claudeagent.MCPServer{
+		"web": {Type: "http", URL: "https://x", Headers: map[string]string{"Authorization": "Bearer t"}},
+	}})
+	if got := string(f.MCPConfig()); got != `{"mcpServers":{"web":{"type":"http","url":"https://x","headers":{"Authorization":"Bearer t"}}}}` {
+		t.Errorf("claude read %s", got)
+	}
+	args := f.Spec().Args
+	if i := slices.Index(args, "--mcp-config"); i < 0 {
+		t.Errorf("%q", args)
+	} else if _, err := os.Stat(args[i+1]); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the config is still there: %v", err)
+	}
+	finish(t, s, f)
 }
 
 // Writing to a claude that has exited, before anyone closed the session,

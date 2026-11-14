@@ -48,13 +48,20 @@ type transport struct {
 	// as its ctx says.
 	wslot       chan struct{}
 	inputClosed atomic.Bool
-	closeOnce   sync.Once
+
+	removeConfig func() // removes the MCP config file, once; nil without one
+	closeOnce    sync.Once
 }
 
 // startTransport starts claude for o.
 func startTransport(ctx context.Context, o Options) (*transport, error) {
-	s, err := spec(o)
+	config, remove, err := writeMCPConfig(o.MCPServers)
 	if err != nil {
+		return nil, err
+	}
+	s, err := spec(o, config)
+	if err != nil {
+		remove()
 		return nil, err
 	}
 	spawn := o.Spawner
@@ -63,9 +70,21 @@ func startTransport(ctx context.Context, o Options) (*transport, error) {
 	}
 	p, err := spawn(ctx, s)
 	if err != nil {
+		remove()
 		return nil, err
 	}
-	return newTransport(p, o), nil
+	t := makeTransport(p, o)
+	t.removeConfig = sync.OnceFunc(remove)
+	t.start(o.MaxLine)
+	return t, nil
+}
+
+// configRead says claude has read the files it was started with (it
+// answered initialize, or ended): they are removed.
+func (t *transport) configRead() {
+	if t.removeConfig != nil {
+		t.removeConfig()
+	}
 }
 
 // newTransport reads p's stdout and stderr and waits for it.
@@ -285,6 +304,7 @@ func (t *transport) closeInput() error {
 func (t *transport) close() {
 	t.closeOnce.Do(func() {
 		close(t.closing)
+		t.configRead()
 		_ = t.closeInput()
 		for _, step := range []struct {
 			after time.Duration

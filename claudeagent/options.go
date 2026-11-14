@@ -94,15 +94,20 @@ type Options struct {
 	FallbackModel string
 	// Effort is how hard the model works ("low", "medium", "high"…; a
 	// model's SupportedEffortLevels); "" = claude's default.
-	Effort                 string
-	PermissionMode         PermissionMode // "" = claude decides, from the settings
-	AllowBypass            bool           // lets the session switch to PermissionBypass
-	Resume                 string         // a session id to continue
-	SessionID              string         // the new session's id
-	ForkSession            bool           // with Resume: continue in a new session
-	ResumeSessionAt        string         // with Resume: the message to resume after
-	SettingSources         []string       // nil = every source; empty = none
-	Settings               string         // --settings: a JSON object, or a settings file's path
+	Effort          string
+	PermissionMode  PermissionMode // "" = claude decides, from the settings
+	AllowBypass     bool           // lets the session switch to PermissionBypass
+	Resume          string         // a session id to continue
+	SessionID       string         // the new session's id
+	ForkSession     bool           // with Resume: continue in a new session
+	ResumeSessionAt string         // with Resume: the message to resume after
+	SettingSources  []string       // nil = every source; empty = none
+	// Settings is --settings: a JSON object, or a settings file's path.
+	// An object goes on claude's command line, which other local users
+	// can read; pass secrets (an env block's tokens) in a file instead.
+	Settings string
+	// MCPServers are passed in a file only this user can read, removed
+	// once claude has answered initialize, never on claude's command line.
 	MCPServers             map[string]MCPServer
 	AddDirs                []string
 	AllowedTools           []string
@@ -159,12 +164,14 @@ type Options struct {
 // run to tens of MiB, and a line over the cap is lost.
 const defaultMaxLine = 128 << 20
 
-// args is claude's command line (after its name) for o. Values go in the
-// --flag=value form, so one starting with "-" can't be read as a flag;
-// JSON goes in an argument of its own, as the official SDKs pass it. There
-// is no -p: claude doesn't run interactively when its stdout isn't a
-// terminal, and the SDKs rely on that too.
-func args(o Options) ([]string, error) {
+// args is claude's command line (after its name) for o, with mcpConfig
+// the path of the MCP servers' config file, if any (writeMCPConfig).
+// Values go in the --flag=value form, so one starting with "-" can't be
+// read as a flag; JSON and the config's path go in an argument of their
+// own, as the official SDKs pass them. There is no -p: claude doesn't run
+// interactively when its stdout isn't a terminal, and the SDKs rely on
+// that too.
+func args(o Options, mcpConfig string) ([]string, error) {
 	if o.FallbackModel != "" && o.FallbackModel == o.Model {
 		return nil, errors.New("claudeagent: the fallback model is the model")
 	}
@@ -202,12 +209,8 @@ func args(o Options) ([]string, error) {
 	} else if o.Settings != "" {
 		a = append(a, "--settings", o.Settings)
 	}
-	if len(o.MCPServers) > 0 {
-		config, err := json.Marshal(map[string]any{"mcpServers": o.MCPServers})
-		if err != nil {
-			return nil, fmt.Errorf("claudeagent: MCP servers: %w", err)
-		}
-		a = append(a, "--mcp-config", string(config))
+	if mcpConfig != "" {
+		a = append(a, "--mcp-config", mcpConfig)
 	}
 	for _, d := range o.AddDirs {
 		flag("add-dir", d)
@@ -307,9 +310,36 @@ func environ(o Options) []string {
 	return env
 }
 
-// spec is how to start claude for o.
-func spec(o Options) (Spec, error) {
-	a, err := args(o)
+// writeMCPConfig writes the MCP servers' config, for claude's
+// --mcp-config, to a file only this user can read, in a new folder of its
+// own, and returns its path and a func that removes both; "" when there
+// are no servers. A file, not an argument: the servers' env and headers
+// carry tokens, and any local user can read a process's arguments (ps,
+// /proc/<pid>/cmdline). claude reads the file as it starts.
+func writeMCPConfig(servers map[string]MCPServer) (path string, remove func(), err error) {
+	if len(servers) == 0 {
+		return "", func() {}, nil
+	}
+	config, err := json.Marshal(map[string]any{"mcpServers": servers})
+	if err != nil {
+		return "", nil, fmt.Errorf("claudeagent: MCP servers: %w", err)
+	}
+	dir, err := os.MkdirTemp("", "claudeagent-mcp-") // 0700
+	if err != nil {
+		return "", nil, fmt.Errorf("claudeagent: a folder for the MCP config: %w", err)
+	}
+	remove = func() { _ = os.RemoveAll(dir) }
+	path = filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(path, config, 0o600); err != nil {
+		remove()
+		return "", nil, fmt.Errorf("claudeagent: writing the MCP config: %w", err)
+	}
+	return path, remove, nil
+}
+
+// spec is how to start claude for o; mcpConfig is as args takes it.
+func spec(o Options, mcpConfig string) (Spec, error) {
+	a, err := args(o, mcpConfig)
 	if err != nil {
 		return Spec{}, err
 	}

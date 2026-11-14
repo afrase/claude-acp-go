@@ -20,6 +20,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - A write with an already-ended ctx (`Send`, `SetModel`…) never reaches claude; before, it did about half the time. A request whose answer came as its ctx ended returns that answer, and isn't withdrawn.
 - A write stuck on a claude that stopped reading its stdin no longer holds every other write: requests and `Send` give up as their ctx says while they wait for the write slot, so a close's bounded interrupt gets through to `Close`. Withdrawing a request waits at most 5 s to be written.
 - `claudeagent.MCPServer` sends no `"type"` when `Type` is empty (claude refused `""`, so a type-less stdio server from `_meta` was skipped), and keeps a decoded config in the new `Raw`, so the fields it doesn't name (`headersHelper`, `oauth`, `timeout`…) reach claude.
+- Security: `Options.MCPServers` no longer go on claude's command line, where any local user could read their env values and HTTP headers (tokens) with `ps`. They go in a 0600 file in a private 0700 temp folder, named by `--mcp-config` and removed once claude has answered initialize (or the start fails, or the session closes). A `Spawner` gets that path in `Spec.Args`; `claudetest.Fake.MCPConfig` returns what it held. A JSON `Options.Settings` still goes on the command line, as its doc now says.
 
 ## v0.3.1 (2026-11-14)
 

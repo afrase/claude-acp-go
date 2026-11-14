@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -38,13 +40,9 @@ func TestArgs(t *testing.T) {
 		},
 		{"empty lists that mean none", Options{SettingSources: []string{}, Tools: []string{}}, []string{"--setting-sources=", "--tools="}},
 		{
-			"JSON in an argument of its own",
-			Options{Settings: `{"ultracode":true}`, MCPServers: map[string]MCPServer{
-				"web":   {Type: "http", URL: "https://x", Headers: map[string]string{"A": "b"}},
-				"tools": {Type: "stdio", Command: "/bin/t", Args: []string{"-x"}, Env: map[string]string{"K": "v"}},
-			}},
-			[]string{"--settings", `{"ultracode":true}`, "--mcp-config",
-				`{"mcpServers":{"tools":{"type":"stdio","command":"/bin/t","args":["-x"],"env":{"K":"v"}},"web":{"type":"http","url":"https://x","headers":{"A":"b"}}}}`},
+			"JSON and the MCP config's path in an argument of their own",
+			Options{Settings: `{"ultracode":true}`, MCPServers: map[string]MCPServer{"web": {Type: "http", URL: "https://x"}}},
+			[]string{"--settings", `{"ultracode":true}`, "--mcp-config", "/tmp/m/mcp.json"},
 		},
 		{"thinking adaptive", Options{Thinking: &Thinking{Type: "adaptive", Display: "summarized"}}, []string{"--thinking=adaptive", "--thinking-display=summarized"}},
 		{"thinking with a budget", Options{Thinking: &Thinking{Type: "enabled", BudgetTokens: 4000}}, []string{"--max-thinking-tokens=4000"}},
@@ -62,7 +60,11 @@ func TestArgs(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := args(tc.o)
+			config := ""
+			if tc.o.MCPServers != nil {
+				config = "/tmp/m/mcp.json"
+			}
+			got, err := args(tc.o, config)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,6 +102,85 @@ func TestMCPServerConfig(t *testing.T) {
 	}
 }
 
+// The MCP servers' tokens are never on claude's command line, which any
+// local user can read: the config is in a file only this user can read,
+// in a folder of its own, removed once claude has read it.
+func TestMCPConfigNotInArgs(t *testing.T) {
+	servers := map[string]MCPServer{
+		"gh":  {Command: "gh-mcp", Env: map[string]string{"GITHUB_TOKEN": "ghp_secret1"}},
+		"web": {Type: "http", URL: "https://x", Headers: map[string]string{"Authorization": "Bearer secret2"}},
+	}
+	var got Spec
+	tr, err := startTransport(context.Background(), Options{CLIPath: "/c", Env: []string{}, MCPServers: servers,
+		Spawner: func(_ context.Context, s Spec) (*Proc, error) {
+			got = s
+			return &Proc{
+				Stdin: nopWriteCloser{}, Stdout: io.NopCloser(strings.NewReader("")), Stderr: io.NopCloser(strings.NewReader("")),
+				Process: exitedProcess{},
+			}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Join(got.Args, " ")
+	for _, secret := range []string{"ghp_secret1", "secret2", "GITHUB_TOKEN", "Authorization"} {
+		if strings.Contains(line, secret) {
+			t.Errorf("%s on the command line: %s", secret, line)
+		}
+	}
+	i := slices.Index(got.Args, "--mcp-config")
+	if i < 0 || i+1 == len(got.Args) {
+		t.Fatalf("no --mcp-config: %q", got.Args)
+	}
+	path := got.Args[i+1]
+	config, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read struct{ MCPServers map[string]MCPServer }
+	if err := json.Unmarshal(config, &read); err != nil || read.MCPServers["gh"].Env["GITHUB_TOKEN"] != "ghp_secret1" ||
+		read.MCPServers["web"].Headers["Authorization"] != "Bearer secret2" {
+		t.Errorf("the config: %s %v", config, err)
+	}
+	if runtime.GOOS != "windows" {
+		for p, want := range map[string]os.FileMode{path: 0o600, filepath.Dir(path): 0o700} {
+			if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != want {
+				t.Errorf("%s: %v %v, want %v", p, fi.Mode().Perm(), err, want)
+			}
+		}
+	}
+	tr.configRead()
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the config's folder is still there: %v", err)
+	}
+	tr.close()
+
+	// A start that fails leaves no config behind either.
+	_, err = startTransport(context.Background(), Options{CLIPath: "/c", Env: []string{}, MCPServers: servers,
+		Spawner: func(_ context.Context, s Spec) (*Proc, error) {
+			got = s
+			return nil, errors.ErrUnsupported
+		}})
+	if err == nil {
+		t.Fatal("started")
+	}
+	if _, err := os.Stat(got.Args[slices.Index(got.Args, "--mcp-config")+1]); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a failed start left its config: %v", err)
+	}
+}
+
+// exitedProcess is a claude that has exited with 0.
+type exitedProcess struct{}
+
+func (exitedProcess) Wait() error            { return nil }
+func (exitedProcess) Signal(os.Signal) error { return os.ErrProcessDone }
+
+// nopWriteCloser is a stdin that takes everything.
+type nopWriteCloser struct{}
+
+func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (nopWriteCloser) Close() error                { return nil }
+
 func TestArgsRefused(t *testing.T) {
 	for _, o := range []Options{
 		{Model: "opus", FallbackModel: "opus"},
@@ -111,7 +192,7 @@ func TestArgsRefused(t *testing.T) {
 		{ExtraArgs: map[string]*string{"": nil}},
 		{Settings: "-x"},
 	} {
-		if a, err := args(o); err == nil {
+		if a, err := args(o, ""); err == nil {
 			t.Errorf("%+v: %q, no error", o, a)
 		}
 	}
@@ -169,7 +250,7 @@ func TestEnvironInherits(t *testing.T) {
 func TestSpecWithSpawnerNeedsNoClaude(t *testing.T) {
 	spawn := func(context.Context, Spec) (*Proc, error) { return nil, errors.ErrUnsupported }
 	for path, want := range map[string]string{"": "claude", "remote-claude": "remote-claude", "bin/claude": "bin/claude"} {
-		s, err := spec(Options{CLIPath: path, Spawner: spawn, Env: []string{"PATH=" + t.TempDir()}})
+		s, err := spec(Options{CLIPath: path, Spawner: spawn, Env: []string{"PATH=" + t.TempDir()}}, "")
 		if err != nil || s.Path != want {
 			t.Errorf("CLIPath %q: %+v %v", path, s, err)
 		}
@@ -189,17 +270,17 @@ func TestSpecFindsClaude(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "claude"), nil, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	s, err := spec(Options{Env: []string{"PATH=relative:" + dir + ":" + bin}, Cwd: "/w"})
+	s, err := spec(Options{Env: []string{"PATH=relative:" + dir + ":" + bin}, Cwd: "/w"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Path != filepath.Join(bin, "claude") || s.Dir != "/w" || s.Args[0] != "--output-format" {
 		t.Errorf("%+v", s)
 	}
-	if _, err := spec(Options{Env: []string{"PATH=" + dir}}); err == nil {
+	if _, err := spec(Options{Env: []string{"PATH=" + dir}}, ""); err == nil {
 		t.Error("found a claude that can't run")
 	}
-	if s, err := spec(Options{CLIPath: "/opt/claude", Env: []string{}}); err != nil || s.Path != "/opt/claude" {
+	if s, err := spec(Options{CLIPath: "/opt/claude", Env: []string{}}, ""); err != nil || s.Path != "/opt/claude" {
 		t.Errorf("%+v %v", s, err)
 	}
 	// A relative path is this process's, never the session's folder's.
@@ -207,7 +288,7 @@ func TestSpecFindsClaude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, err := spec(Options{CLIPath: "node_modules/.bin/claude", Cwd: "/w", Env: []string{}}); err != nil || s.Path != filepath.Join(here, "node_modules", ".bin", "claude") {
+	if s, err := spec(Options{CLIPath: "node_modules/.bin/claude", Cwd: "/w", Env: []string{}}, ""); err != nil || s.Path != filepath.Join(here, "node_modules", ".bin", "claude") {
 		t.Errorf("%+v %v", s, err)
 	}
 }

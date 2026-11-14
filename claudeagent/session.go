@@ -71,6 +71,9 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	}
 	s := newSession(ctx, t, o, byID)
 	raw, err := s.request(ctx, body, false)
+	// claude reads its MCP config as it starts, before it reads stdin, so
+	// by its answer (or its end) the file has done its work.
+	t.configRead()
 	if err != nil {
 		_ = s.Close()
 		if !errors.Is(err, ErrClosed) {
