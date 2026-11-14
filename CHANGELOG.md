@@ -23,6 +23,11 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: a TaskList keeps each task's active form, which the listing doesn't carry, so a task under way still reads `Running tests`, not `Run tests`.
 - `claudeacp`: a subagent's TaskCreate, TaskUpdate and TaskList change the session's plan too, live and in a loaded session, as the task list is the session's; they are still shown as the subagent's calls.
 - `claudeagent` (API): `CompactBoundary.CompactMetadata` is a `*CompactMetadata`, nil when claude doesn't say, and its counts are pointers, nil when claude leaves them out.
+- `claudeagent/claudetest`: `Replay` checks what the client decided, not only a line's kind: a control_request's plain arguments (stop_task's `task_id`, set_model's `model`; not initialize's), a control_response's subtype, the request it answers and a permission's `behavior`, and a user message's content. Ids are compared as the live ones they were mapped to; other fields aren't checked. A test that wrote other text than the recording's, or answered another way, fails now.
+- `claudeagent/claudetest`: `Fake.Awaiting` is no longer met by a line the client has just written: a line on its way to the script, or taken by a step that hasn't returned, counts as given, and Awaiting waits for the script's next wait. The fake's `Proc.Stdin` is now a writer of its own that counts lines, not the bare pipe.
+- `claude-tee`: a frame's `ms` is taken as the frame is written, so times never go back in a cassette when stdin and stdout lines come together.
+- `claude-tee`: a cassette no longer keeps an MCP server's credentials in a `url` (its userinfo, and query parameters named like a key or token) or in its `args` (the values of flags so named, `NAME=value` pairs and `Authorization: …` style headers). A token in a URL's path is still kept: read a cassette before you share it.
+- The README no longer calls `claude-acp` a static binary, and shows `CGO_ENABLED=0 go install …` for one on Linux. It and the command's doc say claude's own stderr is logged as claude wrote it (capped), so it may quote a prompt.
 
 ## v0.3.1 (2026-11-14)
 

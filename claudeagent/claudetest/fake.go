@@ -46,8 +46,12 @@ type Fake struct {
 	stdout, stderr *io.PipeWriter
 	lines          chan stdinLine // what stdin has that no responder answered
 
-	waiting  any       // the stdin line the step being played waits for, if it does
+	waiting  any       // the stdin line the step being played waits for, until one comes
 	awaiters []awaiter // Awaiting's calls not yet met
+	// The stdin lines the client has written and those the fake has
+	// dealt with (passed over, answered or given to the script): a line
+	// between the two is on its way, and may be the one waited for.
+	written, handled int
 }
 
 // awaiter is a call of Awaiting's: what it waits for, and its channel.
@@ -112,7 +116,7 @@ func (f *Fake) Spawn(ctx context.Context, s claudeagent.Spec) (*claudeagent.Proc
 	f.stdin, f.stdout, f.stderr = inR, outW, errW
 	go f.read(bufio.NewReader(inR))
 	go f.play()
-	return &claudeagent.Proc{Stdin: inW, Stdout: outR, Stderr: errR, Process: process{f}}, nil
+	return &claudeagent.Proc{Stdin: stdin{f, inW}, Stdout: outR, Stderr: errR, Process: process{f}}, nil
 }
 
 // process is the fake as its client's claudeagent.Process.
@@ -127,6 +131,22 @@ func (p process) Wait() error {
 // Signal sends the fake a signal: SIGKILL ends it, and SIGTERM unless
 // IgnoreTerm.
 func (p process) Signal(sig os.Signal) error { return p.f.signal(sig) }
+
+// stdin is the fake's stdin as its client writes it: it counts the lines
+// written, before they reach the fake.
+type stdin struct {
+	f *Fake
+	w *io.PipeWriter
+}
+
+func (s stdin) Write(p []byte) (int, error) {
+	s.f.mu.Lock()
+	s.f.written += bytes.Count(p, []byte("\n"))
+	s.f.mu.Unlock()
+	return s.w.Write(p)
+}
+
+func (s stdin) Close() error { return s.w.Close() }
 
 // Spec is what the fake was started with: claude's path, arguments,
 // environment and folder.
@@ -192,10 +212,12 @@ func (f *Fake) play() {
 }
 
 // Awaiting is closed once the script waits for a stdin line that has
-// every field of match (as Expect matches): an Expect whose match has
-// them, or a Replay's step for a recorded line that has them. It is for
-// a test driving the client, to have it write such a line at the point
-// of the run where the recorded client did, not before.
+// every field of match (as Expect matches), an Expect whose match has
+// them or a Replay's step for a recorded line that has them, and no line
+// the client has written is still on its way: the one written last
+// isn't taken for the next. It is for a test driving the client, to have
+// it write such a line at the point of the run where the recorded client
+// did, not before.
 func (f *Fake) Awaiting(match string) <-chan struct{} {
 	var m any
 	if err := json.Unmarshal([]byte(match), &m); err != nil {
@@ -204,11 +226,8 @@ func (f *Fake) Awaiting(match string) <-chan struct{} {
 	ch := make(chan struct{})
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.waiting != nil && matches(m, f.waiting) {
-		close(ch)
-	} else {
-		f.awaiters = append(f.awaiters, awaiter{m, ch})
-	}
+	f.awaiters = append(f.awaiters, awaiter{m, ch})
+	f.meet()
 	return ch
 }
 
@@ -218,11 +237,29 @@ func (f *Fake) playing(st Step) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.waiting = st.wants
-	if st.wants == nil {
+	f.meet()
+}
+
+// dealt notes that a stdin line has been dealt with, by the script when
+// taken is set: its step has its line and waits no more.
+func (f *Fake) dealt(taken bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.handled++
+	if taken {
+		f.waiting = nil
+	}
+	f.meet()
+}
+
+// meet closes the Awaiting calls the script's wait matches, once every
+// line written has been dealt with. f.mu is held.
+func (f *Fake) meet() {
+	if f.waiting == nil || f.handled < f.written {
 		return
 	}
 	f.awaiters = slices.DeleteFunc(f.awaiters, func(a awaiter) bool {
-		if matches(a.match, st.wants) {
+		if matches(a.match, f.waiting) {
 			close(a.ch)
 			return true
 		}
@@ -273,6 +310,9 @@ func (r *run) line() ([]byte, error) {
 	if !ok {
 		return nil, io.EOF
 	}
+	if l.err == nil {
+		r.f.dealt(true)
+	}
 	return l.line, l.err
 }
 
@@ -292,10 +332,8 @@ func (f *Fake) read(stdin *bufio.Reader) {
 		line = bytes.TrimSpace(line)
 		var frame any
 		_ = json.Unmarshal(line, &frame)
-		if head, _ := frame.(map[string]any); head["type"] == "keep_alive" {
-			continue
-		}
-		if f.respond(line, frame) {
+		if head, _ := frame.(map[string]any); head["type"] == "keep_alive" || f.respond(line, frame) {
+			f.dealt(false)
 			continue
 		}
 		select {
