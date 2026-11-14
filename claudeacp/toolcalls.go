@@ -296,6 +296,7 @@ func (ts *tools) end(why callEnd) (incomplete bool) {
 		}
 	}
 	delete(ts.streaming, "")
+	ts.compactShown, ts.failure = false, ""
 	return incomplete
 }
 

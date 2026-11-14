@@ -14,6 +14,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeacp`: a tool's result that isn't its output says why under `_meta.claudeCode`, `nonExecutionKind` (`user-rejected`, `permission-rule`, `interrupted`, `cancelled`, `automode-…`) and `userFeedback`, from claude's `tool_result_meta`, as claude-agent-acp does. `claudeagent.User` has `ToolResultMeta`, as claude sent it.
 - `claudeacp`: a call claude refused without asking says the rule's reason (`decision_reason`) before claude's message, as claude-agent-acp does; its `toolResponse` leaves out fields claude didn't give, and the call's later result adds claude's text as `rawOutput`.
 - `claudeacp`: a compaction's `rawOutput` says trigger `automatic` (else `manual`) as claude-agent-acp does, and leaves out counts claude didn't give, where it said `auto` and 0; a boundary with no facts gives no `rawOutput`.
+- `claudeacp`: a failed `/compact` says why once, in its call: claude's copy of the error as a command's output is dropped, and a turn that showed a compaction doesn't show its result's text again, as claude-agent-acp does.
 - `claudeagent` (API): `CompactBoundary.CompactMetadata` is a `*CompactMetadata`, nil when claude doesn't say, and its counts are pointers, nil when claude leaves them out.
 
 ## v0.3.1 (2026-11-14)

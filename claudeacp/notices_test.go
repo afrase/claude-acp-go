@@ -174,3 +174,25 @@ func TestCompactionFacts(t *testing.T) {
 		}
 	}
 }
+
+// A failed /compact says why once, in its call: claude's copy of the
+// error as a command's output and the result's text are not shown too.
+func TestCompactionFailedOnce(t *testing.T) {
+	f := fake(user("id2"),
+		sendf(`{"type":"system","subtype":"status","status":"compacting","uuid":"c2"}`),
+		sendf(`{"type":"system","subtype":"status","status":null,"compact_result":"failed","compact_error":"Not enough messages to compact."}`),
+		sendf(`{"type":"system","subtype":"local_command_output","uuid":"o1","content":"Not enough messages to compact.\n"}`),
+		sendf(`{"type":"system","subtype":"local_command_output","uuid":"o2","content":"Other output."}`),
+		claudetest.Send(`{"type":"result","subtype":"success","uuid":"r1","result":"Not enough messages to compact.","total_cost_usd":0}`),
+		claudetest.Send(idle))
+	p := start(t, nil, f)
+	if got := stopReason(p.prompt(t, p.open(t), "/compact")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	if got := p.texts(); !slices.Equal(got, []string{"text:o2:Other output."}) {
+		t.Errorf("%q", got)
+	}
+	if got := p.toolUpdates(); len(got) != 2 || !strings.Contains(got[1], "Compaction failed: Not enough messages to compact.") {
+		t.Errorf("%s", strings.Join(got, "\n"))
+	}
+}

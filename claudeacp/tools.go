@@ -41,6 +41,11 @@ type tools struct {
 	byID      map[string]*tool
 	streaming map[string]map[int]*tool // by stream (the parent's id; "" at the top) and block index
 	compact   *tool                    // a compaction running
+	// compactShown says the turn showed a compaction, whose result's text
+	// isn't shown again; failure is why one failed, which claude says
+	// again as a command's output.
+	compactShown bool
+	failure      string
 	// early are hooks' reports that came before the reader had the call's
 	// whole input (claude's requests and its messages are read apart),
 	// by the call's id; each goes once the input has.

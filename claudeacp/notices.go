@@ -79,7 +79,7 @@ func (ts *tools) compactingLocked(id string) *tool {
 		id = "compact-" + ts.newID()
 	}
 	t := &tool{id: id, name: "compact"}
-	ts.compact = t
+	ts.compact, ts.compactShown = t, true
 	ts.sendLocked(t, report{status: acp.ToolCallStatusInProgress, title: "Compact conversation", kind: acp.ToolKindThink})
 	return t
 }
@@ -130,8 +130,29 @@ func (ts *tools) compactEnded(result, why string) {
 		ts.sendLocked(t, report{status: acp.ToolCallStatusCompleted})
 		return
 	}
+	ts.failure = why
 	out, _ := json.Marshal(map[string]string{"error": why})
 	ts.sendLocked(t, report{status: acp.ToolCallStatusFailed, rawOutput: out, content: texts("Compaction failed: " + why)})
+}
+
+// compactFailure says text is claude's second word on why the turn's
+// compaction failed, which the compaction's call shows: it is said once.
+func (ts *tools) compactFailure(text string) bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if ts.failure == "" || strings.TrimSpace(text) != strings.TrimSpace(ts.failure) {
+		return false
+	}
+	ts.failure = ""
+	return true
+}
+
+// compactionShown says the turn showed a compaction: the result's text
+// is claude's word on it, which the call has said.
+func (ts *tools) compactionShown() bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.compactShown
 }
 
 // memoryRecall is the memories claude recalled for a turn, as a read
@@ -160,7 +181,7 @@ func (ts *tools) memoryRecall(m *claudeagent.MemoryRecall) {
 // second message, as claude-agent-acp sends both; a client that wants
 // the command's output reads the last.
 func (s *session) localOutput(m *claudeagent.LocalCommandOutput) {
-	if m.Content == "" {
+	if m.Content == "" || s.tools.compactFailure(m.Content) {
 		return
 	}
 	s.st.local = true
