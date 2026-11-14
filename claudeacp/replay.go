@@ -18,7 +18,9 @@ import (
 // own copy can line the two up: the
 // user's messages under claude's uuids, the model's text under the API's
 // message ids, each tool call as a tool_call with its whole input then
-// its result (or failed, when the history has none). Usage, notices and
+// its result (or failed, when the history has none); a prompt claude took
+// into a running turn, kept only as an attachment, replays as the user's
+// message where it was taken, as the SDK reads it. Usage, notices and
 // permission requests aren't replayed. To
 // a client of subagents, each subagent is announced after the call that
 // started it, its own transcript replays on its session, and once the
@@ -34,7 +36,16 @@ type replayer struct {
 	kids    []*replayedKid               // the subagents announced, in order
 	byID    map[string]*replayedKid      // the same, by id
 	byAgent map[string]sessions.Subagent // the same transcripts, by subagent
-	queued  map[string][]string          // prompts claude kept other than as user messages, by the message before each
+	queued  map[string][]queuedPrompt    // prompts claude kept other than as user messages, by the message before each
+	said    map[string]bool              // the main transcript's messages' uuids
+}
+
+// queuedPrompt is a prompt claude kept other than as a user message, and
+// whether it is the main agent's: the user's, then, unless claude wrote
+// it.
+type queuedPrompt struct {
+	sessions.Queued
+	top bool
 }
 
 // callKey is a call of a replay by its stream and id: a stream's call
@@ -45,11 +56,15 @@ type callKey struct{ stream, id string }
 // history folder ("" for any).
 func (s *session) replay(ms []sessions.Message, cwd string) {
 	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
-		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{}, queued: map[string][]string{}}
+		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{},
+		queued: map[string][]queuedPrompt{}, said: map[string]bool{}}
+	for _, m := range ms {
+		r.said[m.UUID] = true
+	}
 	if s.kids.children {
 		r.findAgents(ms)
-		r.findQueued(ms)
 	}
+	r.findQueued(ms)
 	r.messages(ms, "")
 	r.unanswered()
 	r.ends()

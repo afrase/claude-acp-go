@@ -100,7 +100,7 @@ func (r *replayer) subagent(stream, call string, a sessions.Subagent, in launch)
 	ms = stripFork(ms)
 	r.linkResults(ms)
 	if qs, err := store.SubagentQueuedPrompts(r.s.id, r.cwd, a.ID); err == nil {
-		r.place(qs, ms)
+		r.place(qs, ms, false)
 	}
 	r.messages(ms, call)
 }
@@ -207,24 +207,27 @@ func (r *replayer) launchOf(call string) *replayedKid {
 }
 
 // findQueued reads the prompts claude kept other than as user messages
-// (sessions.Store.QueuedPrompts): a task notification delivered into a
-// running turn is only an attachment, and one still queued when claude
-// closed only a queue-operation, as recordings show. The end of a
-// subagent started by a subagent goes to the one that started it, in that
-// one's transcript (subagent). claude-agent-acp reads neither, so its
-// replay leaves such a subagent idle with no reason.
+// (sessions.Store.QueuedPrompts): a prompt or a task notification
+// delivered into a running turn is only an attachment, and one still
+// queued when claude closed only a queue-operation, as recordings show.
+// The end of a subagent started by a subagent goes to the one that
+// started it, in that one's transcript (subagent). claude-agent-acp reads
+// the attachments (the SDK makes them user messages) but not the
+// queue-operations, so its replay leaves a subagent whose end was still
+// queued idle with no reason.
 func (r *replayer) findQueued(ms []sessions.Message) {
 	qs, err := sessions.Store{ConfigDir: r.s.a.cfg.ConfigDir}.QueuedPrompts(r.s.id, r.cwd)
 	if err != nil {
 		return
 	}
-	r.place(qs, ms)
+	r.place(qs, ms, true)
 }
 
-// place sets the prompts qs of a transcript whose messages are ms to be
-// read after the message before each, or first when that message isn't
-// replayed; one still queued comes after them all.
-func (r *replayer) place(qs []sessions.Queued, ms []sessions.Message) {
+// place sets the prompts qs of a transcript whose messages are ms (the
+// main agent's when top) to be read after the message before each, or
+// first when that message isn't replayed; one still queued comes after
+// them all.
+func (r *replayer) place(qs []sessions.Queued, ms []sessions.Message, top bool) {
 	known := map[string]bool{}
 	for _, m := range ms {
 		known[m.UUID] = true
@@ -234,15 +237,24 @@ func (r *replayer) place(qs []sessions.Queued, ms []sessions.Message) {
 		if !known[after] {
 			after = ""
 		}
-		r.queued[after] = append(r.queued[after], q.Prompt)
+		r.queued[after] = append(r.queued[after], queuedPrompt{q, top})
 	}
 }
 
-// notifiedAfter keeps what the prompts queued after the message uuid
-// ("" for those first) say of subagents' ends.
+// notifiedAfter replays the prompts queued after the message uuid ("" for
+// those first): what they say of subagents' ends is kept, and one the
+// user sent while a turn ran, which claude took into it, is the user's
+// message, under the uuid of the message it came from, unless that
+// message is in the transcript too.
 func (r *replayer) notifiedAfter(uuid string) {
 	for _, p := range r.queued[uuid] {
-		r.notified(p)
+		r.notified(p.Prompt)
+		if !p.top || p.Pending || p.Meta || p.Notification || r.said[p.ID] {
+			continue
+		}
+		if text, ok := userText(p.Prompt); ok {
+			r.chunk("user_message_chunk", "", p.ID, acp.ContentBlock{Text: &acp.TextContent{Text: text}})
+		}
 	}
 	delete(r.queued, uuid)
 }

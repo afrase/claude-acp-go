@@ -14,6 +14,8 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - `claudeagent/sessions`: `Subagent` has `Background` (the sidecar's `requestShape` is `background`) and `StoppedByUser`. `claudeacp`'s load uses them: a subagent claude ran in the background unasked is no longer ended by its call's immediate result, and one the user stopped ends cancelled.
 - `claudeacp`: a replayed call the history has no result for (claude was stopped while it ran, or the session was forked before its result) ends failed, instead of staying pending; one the live session still runs is left to it.
 - `claudeacp`: a load replays a fork child's (`subagent_type: "fork"`) own work alone, without the copy of the launching message and the directive boilerplate its transcript starts with, as claude-agent-acp does: the fork's call no longer stays pending on the session, and its sibling subagents are no longer announced under the fork. A replayed call's result ends only the call of its own transcript.
+- `claudeacp`: a load replays a prompt claude took into a running turn (kept only as a `queued_command` attachment) as the user's message where claude took it, under the uuid of the message it came from, as the SDK and claude-agent-acp have it; not a task's end, a meta prompt, or one the transcript also has as a user message.
+- `claudeagent/sessions`: `Queued` has `ID` (the attachment's `source_uuid`, else its uuid), `Meta` and `Notification`.
 
 ## v0.3.1 (2026-11-14)
 
