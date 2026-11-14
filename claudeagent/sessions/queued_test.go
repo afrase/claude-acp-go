@@ -25,8 +25,12 @@ func queueOp(op, content string) record {
 func TestQueuedPrompts(t *testing.T) {
 	config, cwd, dir := project(t)
 	id := newUUID()
-	queued := func(uuid, parent string, prompt any) record {
-		return rec("attachment", uuid, parent, "attachment", record{"type": "queued_command", "prompt": prompt})
+	queued := func(uuid, parent string, prompt any, fields ...any) record {
+		a := record{"type": "queued_command", "prompt": prompt}
+		for i := 0; i+1 < len(fields); i += 2 {
+			a[fields[i].(string)] = fields[i+1]
+		}
+		return rec("attachment", uuid, parent, "attachment", a)
 	}
 	transcript(t, dir, id,
 		queueOp("enqueue", ""),
@@ -37,9 +41,11 @@ func TestQueuedPrompts(t *testing.T) {
 		queueOp("enqueue", "taken"),
 		queued("q1", "a1", "taken"),
 		queueOp("remove", "taken"),
-		queued("q2", "q1", []any{record{"type": "text", "text": "in "}, record{"type": "text", "text": "blocks"}}),
+		queued("q2", "q1", []any{record{"type": "text", "text": "in "}, record{"type": "text", "text": "blocks"}}, "source_uuid", "src"),
+		queued("q3", "q2", "note", "isMeta", true, "origin", record{"kind": "task-notification"}),
+		queued("q4", "q3", "delivered", "origin", record{"kind": "task-notification", "subkind": "routine"}),
 		queued("off", "u1", "on a dead branch"),
-		text("assistant", "a2", "q2", "done"),
+		text("assistant", "a2", "q4", "done"),
 		queueOp("enqueue", "next"),
 		queueOp("dequeue", ""),
 		queueOp("enqueue", "left"),
@@ -48,7 +54,9 @@ func TestQueuedPrompts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Queued{{Prompt: "taken", After: "a1"}, {Prompt: "in blocks", After: "a1"}, {Prompt: "left", After: "a2", Pending: true}}
+	want := []Queued{{Prompt: "taken", After: "a1", ID: "q1"}, {Prompt: "in blocks", After: "a1", ID: "src"},
+		{Prompt: "note", After: "a1", ID: "q3", Meta: true, Notification: true}, {Prompt: "delivered", After: "a1", ID: "q4"},
+		{Prompt: "left", After: "a2", Pending: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("QueuedPrompts = %+v\nwant %+v", got, want)
 	}
@@ -83,7 +91,7 @@ func TestSubagentQueuedPrompts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Queued{{Prompt: "early", After: "s1"}, {Prompt: "inner ended", After: "s2"}}
+	want := []Queued{{Prompt: "early", After: "s1", ID: "q0"}, {Prompt: "inner ended", After: "s2", ID: "q1"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("SubagentQueuedPrompts = %+v\nwant %+v", got, want)
 	}

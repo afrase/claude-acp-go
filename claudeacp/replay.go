@@ -1,7 +1,10 @@
 package claudeacp
 
 import (
+	"cmp"
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -15,7 +18,10 @@ import (
 // own copy can line the two up: the
 // user's messages under claude's uuids, the model's text under the API's
 // message ids, each tool call as a tool_call with its whole input then
-// its result. Usage, notices and permission requests aren't replayed. To
+// its result (or failed, when the history has none); a prompt claude took
+// into a running turn, kept only as an attachment, replays as the user's
+// message where it was taken, as the SDK reads it. Usage, notices and
+// permission requests aren't replayed. To
 // a client of subagents, each subagent is announced after the call that
 // started it, its own transcript replays on its session, and once the
 // whole history is out each says how it ended.
@@ -25,25 +31,75 @@ type replayer struct {
 	s       *session
 	cwd     string                       // where the transcript was found
 	agents  map[string]sessions.Subagent // subagents' transcripts, by the call that started each
-	calls   map[string]*tool             // calls shown, until their results
+	calls   map[callKey]*tool            // calls shown, until their results
 	inputs  map[string]launch            // what the calls that start, message or stop a subagent said
 	kids    []*replayedKid               // the subagents announced, in order
 	byID    map[string]*replayedKid      // the same, by id
 	byAgent map[string]sessions.Subagent // the same transcripts, by subagent
-	queued  map[string][]string          // prompts claude kept other than as user messages, by the message before each
+	queued  map[string][]queuedPrompt    // prompts claude kept other than as user messages, by the message before each
+	said    map[string]bool              // the main transcript's messages' uuids
+	sends   []sendCall                   // the SendMessage calls, in order
+	// delivered are the SendMessage calls whose message a subagent's
+	// transcript has, replayed there.
+	delivered map[string]bool
 }
+
+// queuedPrompt is a prompt claude kept other than as a user message, and
+// whether it is the main agent's: the user's, then, unless claude wrote
+// it.
+type queuedPrompt struct {
+	sessions.Queued
+	top bool
+}
+
+// callKey is a call of a replay by its stream and id: a stream's call
+// never takes another's, should a transcript repeat an id.
+type callKey struct{ stream, id string }
 
 // replay sends the client the session's history, ms, found in cwd's
 // history folder ("" for any).
 func (s *session) replay(ms []sessions.Message, cwd string) {
-	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[string]*tool{},
-		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{}, queued: map[string][]string{}}
+	r := &replayer{s: s, cwd: cwd, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
+		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{},
+		queued: map[string][]queuedPrompt{}, said: map[string]bool{}, delivered: map[string]bool{}}
+	for _, m := range ms {
+		r.said[m.UUID] = true
+	}
 	if s.kids.children {
 		r.findAgents(ms)
-		r.findQueued(ms)
+		r.findSends(ms)
 	}
+	r.findQueued(ms)
 	r.messages(ms, "")
+	r.unanswered()
 	r.ends()
+}
+
+// noResultText is what a replayed call with no result in the history
+// says: claude was stopped while it ran, or the session was forked
+// before its result.
+const noResultText = "The history has no result for this call."
+
+// unanswered ends the calls the history shows with no result, as nothing
+// will end them now; a call the live session still runs is left to it.
+func (r *replayer) unanswered() {
+	keys := slices.SortedFunc(maps.Keys(r.calls), func(a, b callKey) int {
+		return cmp.Or(cmp.Compare(a.stream, b.stream), cmp.Compare(a.id, b.id))
+	})
+	for _, k := range keys {
+		if t := r.calls[k]; !r.s.tools.running(t.id) {
+			r.s.tools.show(t, report{status: acp.ToolCallStatusFailed, content: texts(noResultText)})
+		}
+	}
+	clear(r.calls)
+}
+
+// running says the call id is one the session runs now.
+func (ts *tools) running(id string) bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	t := ts.byID[id]
+	return t != nil && !t.ended
 }
 
 // messages replays ms, of the stream of the call stream ("" at the top).
@@ -80,7 +136,7 @@ func (r *replayer) assistant(stream string, msg claudeagent.APIMessage) {
 		case isToolUse(b.Type):
 			r.toolUse(stream, b)
 		case strings.HasSuffix(b.Type, "_tool_result"):
-			r.toolResult(b, nil)
+			r.toolResult(stream, b, nil)
 		}
 	}
 }
@@ -97,10 +153,19 @@ func (r *replayer) user(stream string, m sessions.Message, msg claudeagent.APIMe
 		_ = json.Unmarshal(m.Raw, &rec)
 		structured = rec.Result
 	}
+	if stream != "" {
+		var text []string
+		for _, b := range msg.Content {
+			if b.Type == "text" {
+				text = append(text, b.Text)
+			}
+		}
+		r.delivery(stream, m, strings.Join(text, "\n"))
+	}
 	for _, b := range msg.Content {
 		switch b.Type {
 		case "tool_result":
-			r.toolResult(b, structured)
+			r.toolResult(stream, b, structured)
 		case "text":
 			r.notified(b.Text)
 			if text, ok := userText(b.Text); ok && stream == "" {
@@ -129,7 +194,7 @@ func (r *replayer) toolUse(stream string, b claudeagent.Block) {
 	}
 	r.s.plan.watch(stream, b)
 	t := &tool{id: b.ID, name: b.Name, parent: stream, whole: true}
-	r.calls[b.ID] = t
+	r.calls[callKey{stream, b.ID}] = t
 	rep := wholeReport(t.name, b.Input, r.s.tools.cwd)
 	var in launch
 	if json.Unmarshal(rep.rawInput, &in) == nil {
@@ -141,17 +206,18 @@ func (r *replayer) toolUse(stream string, b claudeagent.Block) {
 	}
 }
 
-// toolResult ends a call shown, completed or failed, and keeps what it
-// says of a subagent.
-func (r *replayer) toolResult(b claudeagent.Block, structured json.RawMessage) {
+// toolResult ends a call shown of the stream of call stream, completed or
+// failed, and keeps what it says of a subagent.
+func (r *replayer) toolResult(stream string, b claudeagent.Block, structured json.RawMessage) {
 	if r.s.plan.result(b, structured) {
 		return
 	}
-	t := r.calls[b.ToolUseID]
+	k := callKey{stream, b.ToolUseID}
+	t := r.calls[k]
 	if t == nil {
 		return
 	}
-	delete(r.calls, b.ToolUseID)
+	delete(r.calls, k)
 	r.s.tools.show(t, resultReport(t.name, b, structured))
 	r.called(t, b, structured)
 }
