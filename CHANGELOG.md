@@ -2,6 +2,10 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## Unreleased
+
+- `claudeagent/claudetest`: `Replay` checks what the client decided, not only a line's kind: a control_request's plain arguments (stop_task's `task_id`, set_model's `model`; not initialize's), a control_response's subtype, the request it answers and a permission's `behavior`, and a user message's content. Ids are compared as the live ones they were mapped to; other fields aren't checked. A test that wrote other text than the recording's, or answered another way, fails now.
+
 ## v0.3.1 (2026-11-14)
 
 - Needs Go 1.27.4, which fixes GO-2026-6859 in `net/http`. `go install` then builds with the fixed standard library.
