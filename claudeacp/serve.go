@@ -50,7 +50,8 @@ type agent struct {
 	// pause, when a test sets it, runs at points of a prompt's way to
 	// claude: "register" as its turn is about to be queued (a prompt slow
 	// to set up), "write" as its user message is about to be written (a
-	// big one being encoded).
+	// big one being encoded); "ask" as a permission or question claude
+	// asks is about to be put to the user.
 	pause func(at string)
 
 	mu        sync.Mutex

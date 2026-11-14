@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: a permission or question the stopped work asks as a cancel comes is denied, never put to the user: the check and the request's opening are one step, so the cancel either withdraws it or comes first.
 - `claudeacp`: a session/cancel sent right after a session/prompt cancels it, however soon after; it ran to `end_turn` when the cancel was handled before the prompt's turn was queued (it uses acp-go's `SequenceFromContext`). A cancel's drops and interrupt are written after the user messages of the turns they stop, never before; and the running turn's steers claude hasn't taken are dropped too, where claude ran them after the interrupt as a turn of their own.
 - `claudeacp`: withdrawing one prompt (`$/cancel_request`) stops that prompt alone: a queued one is dropped from claude's queue, the running one interrupted; the other prompts go on, where all were cancelled.
 - `claudeacp`: a cancel of the turn spares what a background subagent's own foreground subagents ask, as it spares the background subagent's: their requests were withdrawn, so claude was told to deny and interrupt them.

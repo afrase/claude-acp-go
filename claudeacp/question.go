@@ -57,7 +57,10 @@ func (s *session) askUser(ctx context.Context, r claudeagent.PermissionRequest) 
 		return claudeagent.Deny{Message: "AskUserQuestion called with no valid questions."}, nil
 	}
 	s.tools.shown(r)
-	ctx, done := s.opened(ctx, r.AgentID)
+	ctx, done, stopped := s.openedForWork(ctx, r.AgentID)
+	if stopped {
+		return stoppedWork, nil
+	}
 	defer done()
 	resp, err := s.a.client.CreateElicitation(ctx, questionForm(s.kids.sessionOf(r.AgentID), r.ToolUseID, qs))
 	switch {
