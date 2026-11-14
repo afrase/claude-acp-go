@@ -39,7 +39,7 @@ You need:
 
 - [Claude Code](https://code.claude.com/docs/en/setup), installed and signed
   in (run `claude` once in a terminal).
-- Go 1.27.3 or later, to build.
+- Go 1.27.4 or later, to build.
 
 ```sh
 go install github.com/afrase/claude-acp-go/cmd/claude-acp@latest
