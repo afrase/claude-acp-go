@@ -31,7 +31,6 @@ type turn struct {
 	usage     claudeagent.Usage
 
 	done    chan outcome // its answer, once
-	ended   chan struct{}
 	settled bool
 }
 
@@ -42,7 +41,7 @@ type outcome struct {
 }
 
 func newTurn(id string) *turn {
-	return &turn{id: id, ids: map[string]bool{id: true}, steers: map[string]bool{}, done: make(chan outcome, 1), ended: make(chan struct{})}
+	return &turn{id: id, ids: map[string]bool{id: true}, steers: map[string]bool{}, done: make(chan outcome, 1)}
 }
 
 func (t *turn) ownsAny(ids []string) bool {
@@ -68,7 +67,6 @@ func (s *session) settleLocked(t *turn, o outcome) {
 	}
 	t.settled = true
 	t.done <- o
-	close(t.ended)
 	s.turns = slices.DeleteFunc(s.turns, func(x *turn) bool { return x == t })
 	if s.active == t {
 		s.active = nil
