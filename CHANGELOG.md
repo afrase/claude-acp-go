@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- Builds on acp-go v0.4.0. `claudeacp`: a Write over an existing empty file shows old text `""` rather than a new file; a tool call with no content says `"content":[]`, as claude-agent-acp does; a subagent that ends with no reason known is sent as acp-go's reasonless idle state; a client's message over the 64 MiB cap is skipped and answered rather than ending the connection.
 - The module builds on Windows (`claudeagent/sessions` used Unix-only open flags; claude-tee Unix-only signals). `make check` and CI build and vet it for Windows; the tests still run on macOS and Linux only.
 - `claudeagent.Decode` copies the line it is given, so a message's `Raw` no longer changes when the caller reuses its buffer (a `bufio.Scanner`'s, say).
 - `claudeagent.ContextCategory` has `Kind` ("used", "free", "buffer", "deferred"), the field claude says to classify a category on, rather than its English name.

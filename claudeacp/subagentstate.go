@@ -214,7 +214,7 @@ func (k *subagents) gone() {
 	for _, id := range slices.Sorted(maps.Keys(k.byID)) {
 		if sa := k.byID[id]; sa.shown && !sa.ended {
 			sa.ended = true
-			k.childStateLocked(sa, acp.StateUpdate{Other: json.RawMessage(`{"state":"idle"}`)})
+			k.childStateLocked(sa, acp.StateUpdate{Idle: &acp.IdleStateUpdate{None: true}})
 		}
 	}
 	for len(k.order) > 0 {

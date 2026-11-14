@@ -99,7 +99,7 @@ func toolView(name string, input json.RawMessage, cwd string) view {
 	case "Edit":
 		v := view{title: titled("Edit", rel(file, cwd)), kind: acp.ToolKindEdit, locations: at(file, nil)}
 		if file != "" {
-			v.content = []acp.ToolCallContent{{Diff: &acp.Diff{Path: file, OldText: in.OldString, NewText: in.NewString}}}
+			v.content = []acp.ToolCallContent{{Diff: &acp.Diff{Path: file, OldText: oldText(in.OldString), NewText: in.NewString}}}
 		}
 		return v
 	case "Glob":

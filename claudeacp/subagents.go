@@ -339,7 +339,8 @@ func (k *subagents) delegatedLocked(sa *subagent, call, prompt string) {
 	if call == "" {
 		return
 	}
-	m := &acp.SessionMessage{MessageID: acp.MessageID(call), RecipientSessionID: acp.SessionID(sa.id)}
+	to := acp.SessionID(sa.id)
+	m := &acp.SessionMessage{MessageID: acp.MessageID(call), RecipientSessionID: acp.Nullable[acp.SessionID]{Value: &to, Present: true}}
 	if prompt != "" {
 		c := []acp.ContentBlock{{Text: &acp.TextContent{Text: prompt}}}
 		m.Content = acp.Nullable[[]acp.ContentBlock]{Value: &c, Present: true}

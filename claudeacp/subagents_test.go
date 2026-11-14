@@ -49,12 +49,6 @@ func (c *client) states() []string {
 	var out []string
 	for _, n := range c.notes() {
 		if su := n.Update.SubagentUpdate; su != nil && su.SessionID == "a1" && !su.Title.Present {
-			if st := su.State.Value; st != nil && st.Idle != nil && st.Idle.StopReason == "" {
-				// acp-go keeps a reasonless idle whole, and encodes it again
-				// with its tag twice.
-				out = append(out, `{"state":"idle"}`)
-				continue
-			}
 			b, _ := json.Marshal(su.State)
 			out = append(out, string(b))
 		}
@@ -551,7 +545,7 @@ func shape(notes []acp.SessionNotification, root acp.SessionID) (lines []string)
 			b, _ := json.Marshal(u.SubagentUpdate)
 			line = sid + " subagent " + string(b)
 		case u.SessionMessage != nil:
-			line = sid + " message " + string(u.SessionMessage.MessageID) + " to " + string(u.SessionMessage.RecipientSessionID)
+			line = sid + " message " + string(u.SessionMessage.MessageID) + " to " + string(*u.SessionMessage.RecipientSessionID.Value)
 		case u.ToolCall != nil:
 			cc := claudeMeta(u.ToolCall.Meta)
 			line = sid + " call " + string(u.ToolCall.ToolCallID) + " " + str(cc["toolName"]) + " " + string(u.ToolCall.Status) + parentOf(cc)

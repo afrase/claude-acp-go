@@ -32,7 +32,8 @@ type Config struct {
 }
 
 // readLimit caps a message from the client: a prompt with images can run
-// to tens of MiB.
+// to tens of MiB. A larger one is skipped (a request is answered Invalid
+// request) and the connection goes on.
 const readLimit = 64 << 20
 
 // agent is the ACP agent: the client's connection and the sessions open

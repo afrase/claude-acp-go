@@ -111,11 +111,11 @@ func TestToolResults(t *testing.T) {
 		`tool_call {"toolCallId":"toolu_e","title":"Edit /w/a.go","name":"Edit","kind":"edit","status":"pending","content":[{"type":"diff","path":"/w/a.go","oldText":"x","newText":"y"}],"locations":[{"path":"/w/a.go"}],"rawInput":{"file_path":"/w/a.go","old_string":"x","new_string":"y"},"_meta":{"claudeCode":{"toolName":"Edit"}}}`,
 		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"_meta":{"claudeCode":{"toolName":"Edit","toolResponse":{"filePath":"/w/a.go","structuredPatch":[{"lines":[" a","-x","+y"],"oldStart":1}]}}}}`,
 		`tool_call_update {"toolCallId":"toolu_e","status":"completed","rawOutput":"ok","_meta":{"claudeCode":{"toolName":"Edit"}}}`,
-		`tool_call {"toolCallId":"toolu_b","title":"go test","name":"Bash","kind":"execute","status":"pending","rawInput":{"command":"go test"},"_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash"}}}`,
+		`tool_call {"toolCallId":"toolu_b","title":"go test","name":"Bash","kind":"execute","status":"pending","content":[],"rawInput":{"command":"go test"},"_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash"}}}`,
 		`tool_call_update {"toolCallId":"toolu_b","status":"in_progress","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":1}}}}`,
 		`tool_call_update {"toolCallId":"toolu_b","_meta":{"claudeCode":{"parentToolUseId":"toolu_p","toolName":"Bash","toolResponse":{"elapsedTimeSeconds":2}}}}`,
 		"tool_call_update {\"toolCallId\":\"toolu_b\",\"status\":\"failed\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"```\\nExit code 1\\nFAIL\\n```\"}}],\"rawOutput\":\"Exit code 1\\nFAIL\",\"_meta\":{\"claudeCode\":{\"parentToolUseId\":\"toolu_p\",\"toolName\":\"Bash\"}}}",
-		`tool_call {"toolCallId":"toolu_w","title":"Fetch https://x","name":"WebFetch","kind":"fetch","status":"pending","rawInput":{"url":"https://x"},"_meta":{"claudeCode":{"toolName":"WebFetch"}}}`,
+		`tool_call {"toolCallId":"toolu_w","title":"Fetch https://x","name":"WebFetch","kind":"fetch","status":"pending","content":[],"rawInput":{"url":"https://x"},"_meta":{"claudeCode":{"toolName":"WebFetch"}}}`,
 		`tool_call_update {"toolCallId":"toolu_w","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: a rule"}}],"_meta":{"claudeCode":{"toolName":"WebFetch","toolResponse":{"decisionReason":"a rule","message":"denied by a rule"}}}}`,
 	}
 	if got := p.toolUpdates(); !slices.Equal(got, want) {
@@ -337,7 +337,8 @@ func TestStructuredResult(t *testing.T) {
 
 // The hook's diffs say where each hunk is; a Write over a file whose
 // response has no hunks shows the old text and the new, or says the old
-// was too big to diff, rather than keep a diff that shows a new file.
+// was too big to diff, rather than keep a diff that shows a new file. A
+// Write over an empty file has old text "", not none (a new file's).
 func TestHookDiffs(t *testing.T) {
 	steps := []claudetest.Step{user("id2"), echo("id2"),
 		assistant(`{"type":"tool_use","id":"toolu_e","name":"Edit","input":{"file_path":"/w/a.go","old_string":"x","new_string":"y"}}`),
@@ -347,7 +348,11 @@ func TestHookDiffs(t *testing.T) {
 	steps = append(steps, hookCall("toolu_w", "Write", `{"type":"update","filePath":"/w/big.log","content":"new","structuredPatch":[],"originalFile":null}`)...)
 	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_s","name":"Write","input":{"file_path":"/w/s.txt","content":"same"}}`))
 	steps = append(steps, hookCall("toolu_s", "Write", `{"type":"update","filePath":"/w/s.txt","content":"same","structuredPatch":[],"originalFile":"same"}`)...)
-	for _, id := range []string{"toolu_e", "toolu_w", "toolu_s"} {
+	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_0","name":"Write","input":{"file_path":"/w/empty.txt","content":"hi"}}`))
+	steps = append(steps, hookCall("toolu_0", "Write", `{"type":"update","filePath":"/w/empty.txt","content":"hi","structuredPatch":[{"oldStart":1,"newStart":1,"lines":["+hi"]}],"originalFile":""}`)...)
+	steps = append(steps, assistant(`{"type":"tool_use","id":"toolu_1","name":"Write","input":{"file_path":"/w/empty2.txt","content":"hi"}}`))
+	steps = append(steps, hookCall("toolu_1", "Write", `{"type":"update","filePath":"/w/empty2.txt","content":"hi","structuredPatch":[],"originalFile":""}`)...)
+	for _, id := range []string{"toolu_e", "toolu_w", "toolu_s", "toolu_0", "toolu_1"} {
 		steps = append(steps, sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"`+id+`","content":"ok"}]}}`))
 	}
 	steps = append(steps, result(names("id2")), claudetest.Send(idle))
@@ -367,6 +372,8 @@ func TestHookDiffs(t *testing.T) {
 		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"locations":[{"path":"/w/a.go","line":120}]`,
 		"tool_call_update {\"toolCallId\":\"toolu_w\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"Updated `/w/big.log` (previous content too large to diff)\"}}]",
 		`tool_call_update {"toolCallId":"toolu_s","content":[{"type":"diff","path":"/w/s.txt","oldText":"same","newText":"same"}]`,
+		`tool_call_update {"toolCallId":"toolu_0","content":[{"type":"diff","path":"/w/empty.txt","oldText":"","newText":"hi"}],"locations":[{"path":"/w/empty.txt","line":1}]`,
+		`tool_call_update {"toolCallId":"toolu_1","content":[{"type":"diff","path":"/w/empty2.txt","oldText":"","newText":"hi"}]`,
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
