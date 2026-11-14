@@ -146,7 +146,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 	}
 	id := string(req.SessionID)
 	a.waitClosed(id) // its transcript is whole once claude has exited
-	var from string // the folder whose history has the session: the open one's, else any
+	var from string  // the folder whose history has the session: the open one's, else any
 	if s, err := a.session(req.SessionID); err == nil {
 		from = s.cwd
 	}

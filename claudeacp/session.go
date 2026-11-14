@@ -269,7 +269,8 @@ const closeWait = 2 * time.Second
 // answered cancelled, and claude closed. It returns once claude has
 // exited and the reader is done, and does nothing the second time.
 func (s *session) close() {
-	defer s.a.closingStart(s)()
+	done := s.a.closingStart(s)
+	defer done()
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
