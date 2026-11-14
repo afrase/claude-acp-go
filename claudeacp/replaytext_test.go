@@ -20,6 +20,7 @@ func TestUserText(t *testing.T) {
 		{"<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>main</command-args>", "/review main", true},
 		{"<command-name>/context</command-name><command-message>context</command-message><command-args></command-args>", "", false},
 		{"<command-name>review</command-name>", "", false},
+		{"<command-name>/foo", "<command-name>/foo", true},
 		{"<command-name>/doctor</command-name><local-command-stdout>ok</local-command-stdout>", "", false},
 		{"<local-command-stdout>## Context Usage</local-command-stdout>", "", false},
 		{"<system-reminder>a</task-notification>b</system-reminder>c", "c", true},

@@ -94,17 +94,14 @@ func commandLine(text string) (string, bool) {
 
 // markerText is the text of the first marker tag in text.
 func markerText(text, tag string) (string, bool) {
-	open, end := "<"+tag+">", "</"+tag+">"
-	i := strings.Index(text, open)
-	if i < 0 {
+	_, after, ok := strings.Cut(text, "<"+tag+">")
+	if !ok {
 		return "", false
 	}
-	inner := text[i+len(open):]
-	n := strings.Index(inner, end)
-	if n < 0 {
-		return "", false
+	if inner, _, ok := strings.Cut(after, "</"+tag+">"); ok {
+		return inner, true
 	}
-	return inner[:n], true
+	return "", false
 }
 
 var (
