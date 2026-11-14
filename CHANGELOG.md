@@ -19,6 +19,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - A session closes claude's stdout and stderr once they are read to the end, and its stdin once claude exits, instead of leaving the descriptors to the GC.
 - A write with an already-ended ctx (`Send`, `SetModel`…) never reaches claude; before, it did about half the time. A request whose answer came as its ctx ended returns that answer, and isn't withdrawn.
 - A write stuck on a claude that stopped reading its stdin no longer holds every other write: requests and `Send` give up as their ctx says while they wait for the write slot, so a close's bounded interrupt gets through to `Close`. Withdrawing a request waits at most 5 s to be written.
+- `claudeagent.MCPServer` sends no `"type"` when `Type` is empty (claude refused `""`, so a type-less stdio server from `_meta` was skipped), and keeps a decoded config in the new `Raw`, so the fields it doesn't name (`headersHelper`, `oauth`, `timeout`…) reach claude.
 
 ## v0.3.1 (2026-11-14)
 

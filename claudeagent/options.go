@@ -1,6 +1,7 @@
 package claudeagent
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -47,12 +48,35 @@ const (
 
 // MCPServer is an MCP server claude starts or connects to for the session.
 type MCPServer struct {
-	Type    string            `json:"type"` // "stdio", "http" or "sse"
+	Type    string            `json:"type,omitempty"` // "stdio" (also ""), "http" or "sse"
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// Raw is the server's config as decoded. When set it is what claude
+	// gets, unchanged, with the fields the package doesn't name (timeout,
+	// headersHelper, oauth…); clear it to send the fields instead.
+	Raw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes m, keeping it in Raw.
+func (m *MCPServer) UnmarshalJSON(data []byte) error {
+	type plain MCPServer
+	if err := json.Unmarshal(data, (*plain)(m)); err != nil {
+		return err
+	}
+	m.Raw = bytes.Clone(data)
+	return nil
+}
+
+// MarshalJSON encodes m: Raw when set, else the fields.
+func (m MCPServer) MarshalJSON() ([]byte, error) {
+	if len(m.Raw) > 0 {
+		return m.Raw, nil
+	}
+	type plain MCPServer
+	return json.Marshal(plain(m))
 }
 
 // Options says how to run claude. The zero value runs the claude on PATH

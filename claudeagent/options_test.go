@@ -2,6 +2,7 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,6 +73,30 @@ func TestArgs(t *testing.T) {
 				t.Errorf("print mode or bare asked for: %q", got)
 			}
 		})
+	}
+}
+
+// An MCP server goes to claude as its config was given: with no type
+// when it had none (claude reads that as stdio, and refuses ""), and with
+// the fields the package doesn't name.
+func TestMCPServerConfig(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"stdio without a type", `{"command":"npx","args":["db-mcp"]}`, `{"command":"npx","args":["db-mcp"]}`},
+		{"http with a headers helper", `{"type":"http","url":"https://x","headersHelper":"/bin/auth","oauth":{"clientId":"c"}}`,
+			`{"type":"http","url":"https://x","headersHelper":"/bin/auth","oauth":{"clientId":"c"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var servers map[string]MCPServer
+			if err := json.Unmarshal([]byte(`{"s":`+tc.in+`}`), &servers); err != nil {
+				t.Fatal(err)
+			}
+			if b, err := json.Marshal(servers["s"]); err != nil || string(b) != tc.want {
+				t.Errorf("%s %v", b, err)
+			}
+		})
+	}
+	if b, _ := json.Marshal(MCPServer{Command: "/bin/t"}); string(b) != `{"command":"/bin/t"}` {
+		t.Errorf("built: %s", b)
 	}
 }
 
