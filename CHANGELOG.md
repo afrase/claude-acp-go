@@ -2,7 +2,9 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
-## Unreleased
+## v0.4.0 (2026-11-14)
+
+The fixes from a whole-code review (115 findings, all of them but one), on acp-go v0.4.0. Breaking: `claudeacp.Main` returns an error, `claudeagent.CancelAsyncMessage` returns whether the message was cancelled, `CompactBoundary.CompactMetadata` is a `*CompactMetadata`, `--mcp-config` is passed a file, and `claudetest.Replay` checks what the client decided.
 
 - `claudeacp`: the effort, fast mode and agent options, and ultracode, follow claude's settings files (the user's, the project's, the local and the managed ones) and a settings file the session names (from its cwd), under the settings the session gives, with a model's own effort (`modelSettings`) first, as claude-agent-acp reads them. An effort change then keeps ultracode a settings file turned on, where claude turned it off.
 - `claudeacp`: a load or resume of an open session that sets it up otherwise (its folder, extra folders, MCP servers, system prompt, or `_meta`'s `claudeCode`, `systemPrompt` and `additionalRoots`) closes its claude and resumes it so, in the permission mode it was in, as claude-agent-acp does; claude went on in the old setup, editing the old folder.
