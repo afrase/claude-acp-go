@@ -5,6 +5,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 ## Unreleased
 
 - `claudeacp`: without subagent sessions, a subagent that ended and runs again (a SendMessage, a new start, a running update) counts as running: its next end ends the calls that run left open, and a cancel of the turn spares it while it is in the background.
+- `claudeacp`: a subagent's task frame is late only when its run id sorts before the run known, as the SDK has run ids; a newer run is adopted. A subagent claude resumes with no new `task_started` (a running `task_updated`, or a SendMessage's result) now ends at that run's end, and its open calls with it; a late `task_started` of an earlier run is ignored.
 
 ## v0.3.1 (2026-11-14)
 

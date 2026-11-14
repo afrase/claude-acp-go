@@ -93,18 +93,35 @@ func (k *subagents) updated(m *claudeagent.TaskUpdated) bool {
 	if sa == nil || late(sa, m.RunID) {
 		return false
 	}
+	newer := adopt(sa, m.RunID)
 	if b := m.Patch.IsBackgrounded; b != nil {
 		sa.background = *b
 	}
-	if m.Patch.Status == "running" && sa.ended { // claude ran it again, with no new start
-		k.againLocked(sa, "", "")
+	switch m.Patch.Status {
+	case "running", "pending":
+		// claude ran it again, with no new start: a resumed run may have
+		// no task_started, only a newer run id here.
+		if sa.ended || newer {
+			k.againLocked(sa, "", "")
+		}
 	}
 	return true
 }
 
 // late says a task frame of run is of a run of sa before the one claude
-// runs now.
-func late(sa *subagent, run string) bool { return run != "" && sa.run != "" && run != sa.run }
+// runs now. A resumed task keeps its id and gets a new run id, and run
+// ids sort in the order the runs began, so only an earlier one is late.
+func late(sa *subagent, run string) bool { return run != "" && sa.run != "" && run < sa.run }
+
+// adopt makes run, when it is newer than the one known, sa's run now,
+// and says whether it was.
+func adopt(sa *subagent, run string) bool {
+	if run == "" || run == sa.run || late(sa, run) {
+		return false
+	}
+	sa.run = run
+	return true
+}
 
 // ended is the subagent id ending with claude's status for it ("" or a
 // status that isn't an end changes nothing), once a run: it goes idle,
@@ -117,7 +134,11 @@ func (k *subagents) ended(id, run, call, status, text string) (calls map[string]
 	sa := k.byID[id]
 	end, isEnd := endState(status, text)
 	stale := sa != nil && call != "" && call != sa.call && k.byCall[call] == sa
-	if sa == nil || !isEnd || sa.ended || stale || late(sa, run) {
+	if sa == nil || !isEnd || late(sa, run) {
+		return nil, false
+	}
+	adopt(sa, run)
+	if sa.ended || stale {
 		return nil, false
 	}
 	sa.ended = true

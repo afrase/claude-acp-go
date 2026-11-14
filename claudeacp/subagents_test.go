@@ -340,6 +340,58 @@ func TestSubagentAgain(t *testing.T) {
 	}
 }
 
+// A resumed subagent keeps its task id and gets a newer run id, and may
+// get no task_started: a running update or a SendMessage's result is all
+// that says it runs. The newer run's frames are its run now, and its end
+// ends it; a start of a run before it is late.
+func TestSubagentNewerRun(t *testing.T) {
+	sendMessage := []claudetest.Step{
+		assistant(`{"type":"tool_use","id":"toolu_m","name":"SendMessage","input":{"to":"a1","message":"count again"}}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m","content":"sent"}]},` +
+			`"tool_use_result":{"success":true,"resumedAgentId":"a1"}}`),
+	}
+	running := sendf(`{"type":"system","subtype":"task_updated","task_id":"a1","run_id":"r2","patch":{"status":"running"}}`)
+	ends := sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","tool_use_id":"toolu_m","status":"completed"}`)
+	const endTurn = `{"state":"idle","stopReason":"end_turn"}`
+	for _, tc := range []struct {
+		name   string
+		again  []claudetest.Step
+		states []string
+		call   string // a line shape must have
+		absent string // and one it mustn't
+	}{
+		{"running", []claudetest.Step{running,
+			sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","status":"completed"}`)},
+			[]string{endTurn, stateRunning, endTurn}, "", ""},
+		{"SendMessage", append(slices.Clone(sendMessage), running, subagentCall("toolu_m", "toolu_2"), ends),
+			[]string{endTurn, stateRunning, endTurn}, "a1 update toolu_2 failed parent=toolu_m", ""},
+		{"a late start", []claudetest.Step{running,
+			sendf(`{"type":"system","subtype":"task_started","task_id":"a1","run_id":"r1","tool_use_id":"toolu_old","task_type":"local_agent"}`),
+			sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r2","status":"failed"}`)},
+			[]string{endTurn, stateRunning, `{"state":"idle","stopReason":"error"}`}, "", "a1 message toolu_old to a1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := []claudetest.Step{user("id2"), echo("id2"), agentCall(true), taskStarted(`,"run_id":"r1"`), agentDone,
+				sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","run_id":"r1","status":"completed"}`)}
+			steps = append(append(steps, tc.again...), result(names("id2")), claudetest.Send(idle))
+			p := start(t, withSubagents, fake(steps...))
+			sid := p.open(t)
+			if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
+				t.Fatal(got)
+			}
+			if got := p.states(); !slices.Equal(got, tc.states) {
+				t.Errorf("states %v, want %v", got, tc.states)
+			}
+			if got := shape(p.notes(), sid); tc.call != "" && !slices.Contains(got, tc.call) {
+				t.Errorf("no %q in:\n%s", tc.call, strings.Join(got, "\n"))
+			}
+			if got := shape(p.notes(), sid); tc.absent != "" && slices.Contains(got, tc.absent) {
+				t.Errorf("%q in:\n%s", tc.absent, strings.Join(got, "\n"))
+			}
+		})
+	}
+}
+
 // Without subagent sessions, a subagent that ended runs again all the
 // same: the end of its next run ends the calls that run left open, and a
 // cancel of the turn spares it while it is in the background.

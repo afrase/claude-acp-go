@@ -173,7 +173,11 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if sa := k.byID[m.TaskID]; sa != nil {
-		sa.run, sa.background = m.RunID, m.IsBackgrounded
+		if late(sa, m.RunID) {
+			return // the start of a run before the one claude runs now
+		}
+		adopt(sa, m.RunID)
+		sa.background = m.IsBackgrounded
 		k.againLocked(sa, m.ToolUseID, cmp.Or(m.Prompt, in.Message, in.Prompt))
 		return
 	}
