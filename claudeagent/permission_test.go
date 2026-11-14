@@ -25,6 +25,8 @@ func TestPermissionAnswer(t *testing.T) {
 		{"deny", asked, Deny{}, `{"behavior":"deny","message":"Permission denied","toolUseID":"t1"}`},
 		{"deny and stop", asked, Deny{Message: "no", Interrupt: true, Classification: "user_reject"},
 			`{"behavior":"deny","decisionClassification":"user_reject","interrupt":true,"message":"no","toolUseID":"t1"}`},
+		{"allow by pointer", asked, &Allow{UpdatedInput: json.RawMessage(`{"command":"pwd"}`)}, `{"behavior":"allow","toolUseID":"t1","updatedInput":{"command":"pwd"}}`},
+		{"deny by pointer", asked, &Deny{Message: "no"}, `{"behavior":"deny","message":"no","toolUseID":"t1"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, err := permissionAnswer(tc.r, tc.result)
@@ -36,8 +38,10 @@ func TestPermissionAnswer(t *testing.T) {
 			}
 		})
 	}
-	if _, err := permissionAnswer(asked, nil); err == nil {
-		t.Error("no result answered")
+	for _, none := range []PermissionResult{nil, (*Allow)(nil), (*Deny)(nil)} {
+		if _, err := permissionAnswer(asked, none); err == nil {
+			t.Errorf("%#v answered", none)
+		}
 	}
 }
 

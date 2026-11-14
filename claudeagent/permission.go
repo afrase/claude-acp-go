@@ -30,7 +30,8 @@ type PermissionRequest struct {
 	Raw                     json.RawMessage
 }
 
-// PermissionResult is the answer to a PermissionRequest: Allow or Deny.
+// PermissionResult is the answer to a PermissionRequest: Allow or Deny,
+// or a pointer to one.
 type PermissionResult interface{ permissionResult() }
 
 // Allow lets the tool run.
@@ -201,6 +202,18 @@ type permissionReply struct {
 // tool call, an allow always carries the input (the asked one when
 // unchanged) and a deny always a message: claude checks all three.
 func permissionAnswer(r PermissionRequest, result PermissionResult) (permissionReply, error) {
+	// &Allow{} and &Deny{} satisfy the interface too, and returning a
+	// pointer is a habit worth honouring.
+	switch p := result.(type) {
+	case *Allow:
+		if p != nil {
+			result = *p
+		}
+	case *Deny:
+		if p != nil {
+			result = *p
+		}
+	}
 	switch p := result.(type) {
 	case Allow:
 		input := p.UpdatedInput
