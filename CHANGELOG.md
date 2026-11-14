@@ -4,6 +4,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 
 ## Unreleased
 
+- `claudeacp`: ExitPlanMode's answer is checked against the options the user was shown, not ones worked out again when the answer came: Auto mode picked on a model that lost it meanwhile starts the work accepting edits, where the approval became "The user cancelled."
 - `claudeacp`: what a subagent's stream was writing (its last message's text, its tool uses' inputs) is forgotten when the subagent ends, rather than kept until the session closes.
 - `claudeacp`: a delete, load, resume or fork of a session that is closing waits for its claude to exit: a delete removed the transcript while claude still wrote it (so the chat came back), and a load ran a second claude on it. A delete is also ordered against a load of the same session.
 - `claudeacp`: claude's own messages (`<synthetic>`: an API error, a limit) no longer become the session's model, so `usage_update` names the model that ran and the window is its, not the largest the result names. A failed turn's `errorKind` is its own, not the last turn's that had one. A rate limit's news before any message has counted the context sends no `usage_update`, which showed the session at zero.

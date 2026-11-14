@@ -64,7 +64,7 @@ func (s *session) canUseTool(ctx context.Context, r claudeagent.PermissionReques
 		s.log.Info("asking for a permission", "err", err)
 	}
 	if r.ToolName == "ExitPlanMode" && err == nil && resp != nil && resp.Outcome.Selected != nil {
-		return s.exitPlan(string(resp.Outcome.Selected.OptionID)), nil
+		return s.exitPlan(string(resp.Outcome.Selected.OptionID), opts), nil
 	}
 	return permissionResult(offered, resp, err), nil
 }
