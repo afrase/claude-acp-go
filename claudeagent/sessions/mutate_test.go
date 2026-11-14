@@ -219,6 +219,39 @@ func TestForkTitleAndPlace(t *testing.T) {
 	}
 }
 
+// A fork written into another folder is that folder's: its records'
+// cwd is the new one, so List and Get report it there.
+func TestForkIntoAnotherCwd(t *testing.T) {
+	config, _, dir := project(t)
+	id := newUUID()
+	forkSource(t, dir, id) // its records say cwd /w
+	elsewhere := t.TempDir()
+	st := Store{ConfigDir: config}
+	newID, err := st.Fork(id, "", ForkOptions{Cwd: elsewhere})
+	testNoErr(t, err)
+	want := canonical(elsewhere)
+	for _, r := range readRecords(t, filepath.Join(st.ProjectDir(elsewhere), newID+".jsonl")) {
+		if c, ok := r["cwd"]; ok && c != want {
+			t.Errorf("a record's cwd is %v, want %s", c, want)
+		}
+	}
+	infos, err := st.List(elsewhere, 0, 0)
+	testNoErr(t, err)
+	if len(infos) != 1 || infos[0].ID != newID || infos[0].Cwd != want {
+		t.Errorf("List = %+v", infos)
+	}
+	info, err := st.Get(newID, elsewhere)
+	if err != nil || info.Cwd != want {
+		t.Errorf("Get = %+v, %v", info, err)
+	}
+	// A fork kept beside its session keeps the cwd it had.
+	beside, err := st.Fork(id, "", ForkOptions{})
+	testNoErr(t, err)
+	if r := readRecords(t, filepath.Join(dir, beside+".jsonl")); r[0]["cwd"] != "/w" {
+		t.Errorf("a fork beside its session has cwd %v", r[0]["cwd"])
+	}
+}
+
 func TestForkMissing(t *testing.T) {
 	config, cwd, dir := project(t)
 	empty, sideOnly := newUUID(), newUUID()
