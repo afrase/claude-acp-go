@@ -282,7 +282,10 @@ func (k *subagents) started(m *claudeagent.TaskStarted, in launch, stream string
 	if p != nil && p.shown {
 		sa.on = p.id
 	}
-	k.announceLocked(sa, in, m.SubagentType, m.Description)
+	// One resumed after a restart (a SendMessage's: its call names no
+	// role) is named as the history has it, as claude-agent-acp names it.
+	in.Name = cmp.Or(in.Name, from.Name)
+	k.announceLocked(sa, in, cmp.Or(m.SubagentType, from.AgentType), cmp.Or(m.Description, from.Description))
 	k.delegatedLocked(sa, sa.call, cmp.Or(in.Prompt, m.Prompt, in.Message))
 	if launched != "" && k.byCall[launched] == sa {
 		k.flushLocked(launched, sa.id)

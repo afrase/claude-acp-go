@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	acp "github.com/afrase/acp-go/unstable"
 
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
+	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
 // withSubagents is a client that takes subagents as sessions of their own.
@@ -652,6 +655,10 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 		asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count","run_in_background":true}`)),
 		userRec("r1", resultBlocks("toolu_A", "Async agent launched", false)))
 	p.writeSubagent(t, cwd, sid, "a1", "toolu_A", userRec("s1", "count"), asstRec("s2", "msg_A1", textBlock("1")))
+	meta := filepath.Join(sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.ProjectDir(cwd), sid, "subagents", "agent-a1.meta.json")
+	if err := os.WriteFile(meta, []byte(`{"agentType":"general-purpose","name":"counter","description":"Count","toolUseId":"toolu_A"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +668,7 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 	got := shape(p.notes(), acp.SessionID(sid))
 	want := []string{
 		"s1 call toolu_m SendMessage pending",
-		`s1 subagent {"sessionId":"a1","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
+		`s1 subagent {"sessionId":"a1","title":"counter (general-purpose)","description":"Count","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
 		"a1 message toolu_m to a1",
 		"a1 call toolu_2 Bash pending parent=toolu_A",
 		"a1 update toolu_2 completed parent=toolu_A",
