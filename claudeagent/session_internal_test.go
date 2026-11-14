@@ -1,6 +1,7 @@
 package claudeagent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -103,4 +104,51 @@ func TestWritesWaitForInitialize(t *testing.T) {
 			t.Errorf("initialize: %v", err)
 		}
 	})
+}
+
+// writing returns a session whose initialize is written, and its stdin.
+func writing(t *testing.T) (*Session, *stdin) {
+	t.Helper()
+	in := &stdin{closed: make(chan struct{})}
+	outR, outW := io.Pipe()
+	errR, errW := io.Pipe()
+	p := &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &untilStdinCloses{in, outW, errW}}
+	s := newSession(t.Context(), newTransport(p, Options{}), Options{}, nil)
+	s.initDone()
+	t.Cleanup(func() { _ = s.Close() })
+	return s, in
+}
+
+// A write with an ended ctx is never written, though initialize is: not
+// half the time, as a select among ready cases would have it.
+func TestWriteWithEndedContext(t *testing.T) {
+	s, in := writing(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 100 {
+		if err := s.write(ctx, map[string]string{"type": "user"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if got := in.written(); len(got) != 0 {
+		t.Errorf("written: %q", got)
+	}
+}
+
+// An answer that has come is the answer, though ctx has ended too; the
+// request isn't withdrawn then.
+func TestAnswerBeatsEndedContext(t *testing.T) {
+	s, in := writing(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 100 {
+		c := &Call{s: s, ctx: ctx, id: "r1", subtype: "ping", ch: make(chan reply, 1)}
+		c.ch <- reply{payload: json.RawMessage(`{"ok":true}`)}
+		if payload, err := c.answer(); err != nil || string(payload) != `{"ok":true}` {
+			t.Fatalf("answer: %s %v", payload, err)
+		}
+	}
+	if got := in.written(); len(got) != 0 {
+		t.Errorf("withdrawn: %q", got)
+	}
 }

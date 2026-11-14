@@ -243,8 +243,18 @@ func (s *Session) initWritten() bool {
 func (s *Session) initDone() { s.initOnce.Do(func() { close(s.initCh) }) }
 
 // write writes v to claude's stdin once initialize has been written:
-// claude takes its first line for the start of the session.
+// claude takes its first line for the start of the session. An ended ctx
+// or a closing session is checked first: select picks among ready cases
+// at random, and initCh is nearly always ready.
 func (s *Session) write(ctx context.Context, v any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-s.closing:
+		return ErrClosed
+	default:
+	}
 	select {
 	case <-s.initCh:
 	case <-ctx.Done():

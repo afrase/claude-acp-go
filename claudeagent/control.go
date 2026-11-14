@@ -219,19 +219,32 @@ func (c *Call) answer() (json.RawMessage, error) {
 	if c.timeout {
 		expired = c.s.after(requestTimeout)
 	}
+	var err error
 	select {
 	case r := <-c.ch:
-		if ce, ok := errors.AsType[*ControlError](r.err); ok {
-			ce.Subtype = c.subtype
-		}
-		return r.payload, r.err
+		return c.got(r)
 	case <-c.ctx.Done():
-		c.s.withdraw(c.ctx, c.id)
-		return nil, fmt.Errorf("claudeagent: %s: %w", c.subtype, c.ctx.Err())
+		err = fmt.Errorf("claudeagent: %s: %w", c.subtype, c.ctx.Err())
 	case <-expired:
-		c.s.withdraw(c.ctx, c.id)
-		return nil, fmt.Errorf("claudeagent: claude didn't answer %s in %s: %w", c.subtype, requestTimeout, context.DeadlineExceeded)
+		err = fmt.Errorf("claudeagent: claude didn't answer %s in %s: %w", c.subtype, requestTimeout, context.DeadlineExceeded)
 	}
+	// An answer that came as ctx ended wins: select picked at random, and
+	// claude has done what was asked.
+	select {
+	case r := <-c.ch:
+		return c.got(r)
+	default:
+	}
+	c.s.withdraw(c.ctx, c.id)
+	return nil, err
+}
+
+// got is c's answer r as answer returns it.
+func (c *Call) got(r reply) (json.RawMessage, error) {
+	if ce, ok := errors.AsType[*ControlError](r.err); ok {
+		ce.Subtype = c.subtype
+	}
+	return r.payload, r.err
 }
 
 // Wait waits for the answer as Request does and decodes it into resp

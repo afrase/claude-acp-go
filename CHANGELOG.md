@@ -17,6 +17,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 - New `claudeagent.ErrExitedBeforeInit`: `Start`'s error when claude ends before it answers initialize, whatever its exit code (with the `*ExitError` beside it for a non-zero one). `claudeacp` tells a vanished session by it rather than by the error's text.
 - A write to a claude that has exited is `ErrClosed` (wrapping the pipe's error), not a bare "broken pipe"; and `Start` against a claude that exits before initialize can be written still returns `ErrExitedBeforeInit` with the `*ExitError` and its stderr.
 - A session closes claude's stdout and stderr once they are read to the end, and its stdin once claude exits, instead of leaving the descriptors to the GC.
+- A write with an already-ended ctx (`Send`, `SetModel`…) never reaches claude; before, it did about half the time. A request whose answer came as its ctx ended returns that answer, and isn't withdrawn.
 
 ## v0.3.1 (2026-11-14)
 
