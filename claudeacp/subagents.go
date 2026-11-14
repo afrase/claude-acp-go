@@ -53,10 +53,16 @@ type subagents struct {
 	held   map[string][]acp.SessionUpdate // a call's work, until claude says whose it is
 	order  []string                       // held's calls, oldest first
 	nheld  int
+	// onRoot are the tool calls of a subagent's stream whose tool_call
+	// went on the session, held past the bounds: their updates follow it
+	// there, until they end.
+	onRoot map[string]bool
 }
 
-// The bounds of held, as claude-agent-acp's: calls, updates in all, and
-// updates of one call.
+// The bounds of held, with claude-agent-acp's numbers: calls, updates in
+// all, and updates of one call. Past them claude-agent-acp drops the
+// newest; here the oldest goes on the session, as a client without
+// subagents has it, and the later updates of its tool calls go there too.
 const (
 	maxHeldCalls   = 64
 	maxHeld        = 256
@@ -66,6 +72,7 @@ const (
 func (k *subagents) init(sid string, children bool, send func(string, acp.SessionUpdate)) {
 	k.sid, k.children, k.send = sid, children, send
 	k.byID, k.byCall, k.held = map[string]*subagent{}, map[string]*subagent{}, map[string][]acp.SessionUpdate{}
+	k.onRoot = map[string]bool{}
 }
 
 // emit sends an update of the stream of call parent ("" at the top): a
@@ -78,6 +85,13 @@ func (k *subagents) emit(parent string, u acp.SessionUpdate) {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if id, end := toolCallOf(u); k.onRoot[id] {
+		if end {
+			delete(k.onRoot, id)
+		}
+		k.send(k.sid, u)
+		return
+	}
 	if sa := k.byCall[parent]; sa != nil && sa.shown {
 		k.send(sa.id, u)
 		return
@@ -100,11 +114,31 @@ func (k *subagents) emit(parent string, u acp.SessionUpdate) {
 // flushLocked sends the work held for call to session to.
 func (k *subagents) flushLocked(call, to string) {
 	for _, u := range k.held[call] {
+		if id, end := toolCallOf(u); id != "" && to == k.sid {
+			if end {
+				delete(k.onRoot, id)
+			} else {
+				k.onRoot[id] = true
+			}
+		}
 		k.send(to, u)
 	}
 	k.nheld -= len(k.held[call])
 	delete(k.held, call)
 	k.order = slices.DeleteFunc(k.order, func(c string) bool { return c == call })
+}
+
+// toolCallOf is the tool call u is of, if it is one's, and whether it
+// ends it.
+func toolCallOf(u acp.SessionUpdate) (id string, end bool) {
+	var st acp.ToolCallStatus
+	switch {
+	case u.ToolCall != nil:
+		id, st = string(u.ToolCall.ToolCallID), u.ToolCall.Status
+	case u.ToolCallUpdate != nil:
+		id, st = string(u.ToolCallUpdate.ToolCallID), u.ToolCallUpdate.Status
+	}
+	return id, st == acp.ToolCallStatusCompleted || st == acp.ToolCallStatusFailed
 }
 
 // release sends what is held for call on the session: the call has ended

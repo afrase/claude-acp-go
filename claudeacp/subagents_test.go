@@ -166,14 +166,18 @@ func TestSubagentEnds(t *testing.T) {
 }
 
 // A subagent's work before claude names its subagent waits within bounds:
-// past them it goes on the session; and a call that ends with claude
+// past them it goes on the session, and so do the later updates of the
+// tool calls that went there; and a call that ends with claude
 // never naming a subagent has its work go there too.
 func TestSubagentHeldBounds(t *testing.T) {
 	steps := []claudetest.Step{user("id2"), echo("id2"), agentCall(true)}
 	for i := range maxHeldPerCall + 8 {
 		steps = append(steps, subagentCall("toolu_p", fmt.Sprintf("toolu_%d", i)))
 	}
-	steps = append(steps, taskStarted(""), agentDone,
+	// The first call's tool_call went on the session: its result follows it.
+	steps = append(steps, taskStarted(""),
+		sendf(`{"type":"user","parent_tool_use_id":"toolu_p","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_0","content":"a"}]}}`),
+		agentDone,
 		assistant(`{"type":"tool_use","id":"toolu_q","name":"Agent","input":{}}`), subagentCall("toolu_q", "toolu_x"),
 		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_q","content":"done"}]}}`),
 		result(names("id2")), claudetest.Send(idle))
@@ -190,6 +194,17 @@ func TestSubagentHeldBounds(t *testing.T) {
 	}
 	if on[string(sid)] != maxHeldPerCall+2 || on["a1"] != 7 {
 		t.Errorf("calls by session: %v", on)
+	}
+	ended := false
+	for _, n := range p.notes() {
+		if u := n.Update.ToolCallUpdate; u != nil && u.ToolCallID == "toolu_0" && u.Status == "completed" {
+			if ended = n.SessionID == sid; !ended {
+				t.Errorf("toolu_0's tool_call is on the session, its end on %s", n.SessionID)
+			}
+		}
+	}
+	if !ended {
+		t.Error("toolu_0 never ended on the session")
 	}
 }
 

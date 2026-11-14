@@ -198,6 +198,7 @@ func (k *subagents) gone() {
 	for len(k.order) > 0 {
 		k.flushLocked(k.order[0], k.sid)
 	}
+	clear(k.onRoot)
 }
 
 // resumed is the subagent agent run again by the SendMessage call with
