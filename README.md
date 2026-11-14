@@ -173,8 +173,11 @@ A change in `claude` can still break it, as it can break the official SDKs.
 ## Development
 
 ```sh
-go build ./... && go vet ./... && go test -race ./...
+make check   # build, vet, lint, govulncheck, the tests with -race
 ```
+
+golangci-lint and govulncheck are pinned in `tools/lint` and run through
+`go tool`, so you install nothing.
 
 The tests run fake `claude`s and need no login. To record new cassettes,
 `claudeagent/claudetest/cmd` has tools that run the real `claude` against a
