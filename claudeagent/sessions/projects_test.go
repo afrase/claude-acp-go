@@ -53,15 +53,25 @@ func TestProjectDirResolvesLinks(t *testing.T) {
 	}
 }
 
+// A long path's folder under another build's hash is found by its first
+// 200 characters and the cwd its transcripts record; another deep path
+// that starts the same isn't taken for it.
 func TestLongFolderFoundByItsStart(t *testing.T) {
 	projects := t.TempDir()
-	path := "/" + strings.Repeat("long-name/", 30)
+	path := "/" + strings.Repeat("long-name/", 30) + "service-a"
+	sibling := "/" + strings.Repeat("long-name/", 30) + "service-b"
 	other := folderName(path)[:maxName] + "-bunhash"
-	if err := os.MkdirAll(filepath.Join(projects, other), 0o700); err != nil {
-		t.Fatal(err)
+	if folderName(sibling)[:maxName] != folderName(path)[:maxName] {
+		t.Fatal("the sibling's folder starts otherwise")
 	}
+	prompt := text("user", "u", "", "hi")
+	prompt["cwd"] = path
+	transcript(t, filepath.Join(projects, other), newUUID(), prompt)
 	if got, ok := findProjectDir(projects, path); !ok || filepath.Base(got) != other {
 		t.Errorf("findProjectDir = %q, %v", got, ok)
+	}
+	if got, ok := findProjectDir(projects, sibling); ok {
+		t.Errorf("findProjectDir(sibling) = %q", got)
 	}
 	// A short path's folder is its name exactly: /p doesn't find /p-q's.
 	if err := os.MkdirAll(filepath.Join(projects, "-p-q"), 0o700); err != nil {

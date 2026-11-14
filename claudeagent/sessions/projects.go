@@ -90,7 +90,7 @@ func (s Store) projects() (string, error) {
 // standard library has no NFC), so a path spelled with decomposed accents
 // gets another name. The CLI's own builds may hash a long path otherwise
 // (the Python SDK says Bun's hash); reads here then find the folder by its
-// first 200 characters.
+// first 200 characters and the working directory its transcripts record.
 func (s Store) ProjectDir(cwd string) string {
 	projects, err := s.projects()
 	if err != nil {
@@ -133,9 +133,9 @@ func folderName(path string) string {
 	return string(b[:maxName]) + "-" + strconv.FormatInt(h, 36)
 }
 
-// findProjectDir returns path's project folder in projects. A long path's
-// folder is also found by its first 200 characters, since the CLI's hash
-// can differ from folderName's.
+// findProjectDir returns path's project folder in projects: the one
+// folderName names, else, for a long path, one under another hash (see
+// longMatch).
 func findProjectDir(projects, path string) (string, bool) {
 	name := folderName(path)
 	if fi, err := os.Stat(filepath.Join(projects, name)); err == nil && fi.IsDir() {
@@ -145,11 +145,37 @@ func findProjectDir(projects, path string) (string, bool) {
 		return "", false
 	}
 	for _, dir := range subdirs(projects) {
-		if strings.HasPrefix(dir, name[:maxName]+"-") {
+		if longMatch(projects, dir, path, name) {
 			return filepath.Join(projects, dir), true
 		}
 	}
 	return "", false
+}
+
+// longMatch says folder, in projects, is the long path's (named name by
+// folderName) under the hash of another CLI build: cut at the same 200
+// characters, and its transcripts recorded in path. The cut alone isn't
+// enough: two deep paths can share their first 200 characters.
+func longMatch(projects, folder, path, name string) bool {
+	return len(name) > maxName && strings.HasPrefix(folder, name[:maxName]+"-") &&
+		recordedCwd(filepath.Join(projects, folder)) == path
+}
+
+// recordedCwd is the working directory the transcripts in dir record, the
+// first that says one; "" when none does.
+func recordedCwd(dir string) string {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") || !e.Type().IsRegular() {
+			continue
+		}
+		if l, ok := readLite(filepath.Join(dir, e.Name())); ok {
+			if cwd := firstString(l.head, "cwd"); cwd != "" {
+				return cwd
+			}
+		}
+	}
+	return ""
 }
 
 // subdirs lists the folders in dir by name; none when it can't be read.

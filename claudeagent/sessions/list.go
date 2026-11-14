@@ -106,7 +106,7 @@ func listProject(projects, dir string) []Info {
 			continue
 		}
 		for _, wt := range trees {
-			if folder == wt.name || len(wt.name) > maxName && strings.HasPrefix(folder, wt.name[:maxName]+"-") {
+			if folder == wt.name || longMatch(projects, folder, wt.path, wt.name) {
 				seen[folder] = true
 				infos = append(infos, readProject(filepath.Join(projects, folder), wt.path)...)
 				break
