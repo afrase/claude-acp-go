@@ -200,14 +200,16 @@ func (s *session) resultLocked(r *claudeagent.Result, end ending) {
 		o = outcome{err: &acp.Error{Code: acp.ErrorCodeInternalError,
 			Message: "Claude ended the turn without a tool's result.", Data: []byte(`{"errorKind":"incomplete_tool_call"}`)}}
 	}
-	if len(t.steers) > 0 && !t.cancelled {
-		t.held = &o
-		return
-	}
+	// The prompts claude folded into t end now, though t may wait for a
+	// steer: no later result names them.
 	for _, n := range named {
 		if n != t {
 			s.settleLocked(n, n.answer(acp.StopReasonEndTurn))
 		}
+	}
+	if len(t.steers) > 0 && !t.cancelled {
+		t.held = &o
+		return
 	}
 	s.settleLocked(t, o)
 	s.owedIdle++

@@ -120,3 +120,35 @@ func TestSteerHandOff(t *testing.T) {
 		})
 	}
 }
+
+// A prompt claude folded into a turn that waits for a steer is answered
+// at the result that names it, not left waiting with the turn.
+func TestSteerFold(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  []claudetest.Step
+	}{
+		{"idle", []claudetest.Step{claudetest.Send(idle)}},
+		{"the steer's result", []claudetest.Step{echo("id4"), result(names("id4")), claudetest.Send(idle)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gates(2)
+			steered := make(chan struct{})
+			steps := []claudetest.Step{user("id2"), signal(g[0]), echo("id2"), user("id3"), signal(g[1]),
+				claudetest.Expect(`{"type":"user","uuid":"id4","priority":"now"}`), signal(steered),
+				result(names("id2", "id3"))}
+			p := start(t, nil, fake(append(steps, tc.end...)...))
+			sid := p.open(t)
+			ws := p.prompts(t, sid, g, "one", "two")
+			if outcome, err := steering.Steer(t.Context(), p.AgentConn, string(sid), steerText("also")); err != nil || outcome != steering.Injected {
+				t.Fatalf("%s %v", outcome, err)
+			}
+			wait(t, steered, "the steer read")
+			for i, w := range ws {
+				if got := stopReason(w); got != "end_turn" {
+					t.Errorf("prompt %d: %s", i+1, got)
+				}
+			}
+		})
+	}
+}
