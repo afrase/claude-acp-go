@@ -93,10 +93,13 @@ func (s *session) handle(m claudeagent.Message) {
 			s.usage(nil, nil)
 		}
 	case *claudeagent.TaskStarted:
+		s.tools.shellStarted(m)
 		s.taskStarted(m)
 	case *claudeagent.TaskUpdated:
+		s.tools.shellUpdated(m)
 		s.taskUpdated(m)
 	case *claudeagent.TaskNotification:
+		s.tools.shellEnded(m)
 		s.taskNotification(m)
 	case *claudeagent.RateLimit:
 		// Not before a message has counted the context, as

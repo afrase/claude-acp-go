@@ -26,6 +26,7 @@ type claudeCodeMeta struct {
 	Kind            string          `json:"kind,omitempty"`            // "informational", for claude's notices
 	Level           *string         `json:"level,omitempty"`           // a notice's level, said even when ""
 	PromptQueueing  bool            `json:"promptQueueing,omitempty"`  // in initialize's answer
+	Task            *shellTask      `json:"task,omitempty"`            // a background command's task, on its call
 
 	nonExecution // why a tool's result isn't its output
 }

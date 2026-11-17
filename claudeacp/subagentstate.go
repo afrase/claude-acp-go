@@ -18,7 +18,7 @@ import (
 // runs again (subagents.started).
 func (s *session) taskStarted(m *claudeagent.TaskStarted) {
 	if m.SubagentType == "" && m.TaskType != "local_agent" {
-		return // a background command's
+		return // a background command's (shells.go)
 	}
 	in, stream := s.tools.callInput(m.ToolUseID)
 	var from sessions.Subagent
