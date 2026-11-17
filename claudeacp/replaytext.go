@@ -109,10 +109,11 @@ var (
 	taskID       = regexp.MustCompile(`(?s)<task-id>(.*?)</task-id>`)
 	taskStatus   = regexp.MustCompile(`(?s)<status>(.*?)</status>`)
 	taskSummary  = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)
+	taskOutput   = regexp.MustCompile(`(?s)<output-file>(.*?)</output-file>`)
 )
 
 // taskNote is what a task notification says of a task's end.
-type taskNote struct{ id, status, summary string }
+type taskNote struct{ id, status, summary, outputFile string }
 
 // taskEnds are the task notifications in a user message's text, in order.
 func taskEnds(text string) []taskNote {
@@ -125,7 +126,7 @@ func taskEnds(text string) []taskNote {
 			return ""
 		}
 		if id := field(taskID); id != "" {
-			out = append(out, taskNote{id: id, status: field(taskStatus), summary: field(taskSummary)})
+			out = append(out, taskNote{id: id, status: field(taskStatus), summary: field(taskSummary), outputFile: field(taskOutput)})
 		}
 	}
 	return out

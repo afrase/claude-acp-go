@@ -234,3 +234,110 @@ func TestShellTaskOfSubagent(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// A load replays a background command's end where the history has it,
+// once: claude's notification of it (kept as a user message, and as its
+// queue's record), or claude's TaskStop of it. A command the history
+// says nothing more of replays no task: nothing says it still runs.
+func TestLoadReplaysShellEnds(t *testing.T) {
+	p := start(t, nil, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	bash := func(call, task string) []rec {
+		return []rec{
+			asstRec("a"+call, "msg_"+call, useBlock("toolu_"+call, "Bash", `{"command":"sleep 9","run_in_background":true}`)),
+			userRec("r"+call, resultBlocks("toolu_"+call, "Command running in background with ID: "+task+".", false),
+				"toolUseResult", map[string]any{"stdout": "", "backgroundTaskId": task}),
+		}
+	}
+	note := func(task, status, summary string) string {
+		return "<task-notification>\n<task-id>" + task + "</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<output-file>/tmp/claude/tasks/" +
+			task + ".output</output-file>\n<status>" + status + "</status>\n<summary>" + summary + "</summary>\n</task-notification>"
+	}
+	records := []rec{userRec("u1", "Run them")}
+	for _, c := range []struct{ call, task string }{{"A", "bA"}, {"B", "bB"}, {"C", "bC"}, {"D", "bD"}} {
+		records = append(records, bash(c.call, c.task)...)
+	}
+	records = append(records,
+		asstRec("t1", "msg_1", textBlock("They run.")),
+		queueOp("enqueue", note("bA", "completed", `Background command "A" completed (exit code 0)`)),
+		userRec("n1", note("bA", "completed", `Background command "A" completed (exit code 0)`)),
+		userRec("n2", note("bB", "failed", `Background command "B" failed with exit code 144`)),
+		asstRec("s1", "msg_2", useBlock("toolu_S", "TaskStop", `{"task_id":"bC"}`)),
+		userRec("s2", resultBlocks("toolu_S", "Successfully stopped task: bC", false),
+			"toolUseResult", map[string]any{"task_id": "bC", "task_type": "local_bash"}),
+	)
+	p.writeHistory(t, cwd, sid, records...)
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	task := func(call, task string) string {
+		return sid + " task toolu_" + call + " " + keysSorted([]byte(`{"claudeCode":{"toolName":"Bash","task":`+task+`}}`))
+	}
+	want := []string{
+		sid + " user u1 Run them",
+		sid + " call toolu_A sleep 9 pending",
+		sid + " update toolu_A completed",
+		sid + " call toolu_B sleep 9 pending",
+		sid + " update toolu_B completed",
+		sid + " call toolu_C sleep 9 pending",
+		sid + " update toolu_C completed",
+		sid + " call toolu_D sleep 9 pending",
+		sid + " update toolu_D completed",
+		sid + " text msg_1 They run.",
+		task("A", `{"id":"bA","type":"local_bash","status":"completed","outputFile":"/tmp/claude/tasks/bA.output","summary":"Background command \"A\" completed (exit code 0)"}`),
+		task("B", `{"id":"bB","type":"local_bash","status":"failed","outputFile":"/tmp/claude/tasks/bB.output","summary":"Background command \"B\" failed with exit code 144"}`),
+		sid + " call toolu_S TaskStop pending",
+		sid + " update toolu_S completed",
+		task("C", `{"id":"bC","type":"local_bash","status":"stopped"}`),
+		sid + " commands",
+	}
+	got := p.replayed()
+	for i, n := range p.notes() {
+		if u := n.Update.ToolCallUpdate; u != nil && claudeMeta(u.Meta)["task"] != nil {
+			b, _ := json.Marshal(u.Meta)
+			got[i] = string(n.SessionID) + " task " + string(u.ToolCallID) + " " + keysSorted(b)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A load of a session that is open already replays a background command
+// its claude still runs as running, which the history can't tell.
+func TestLoadOpenSessionShell(t *testing.T) {
+	f := fake(user("id1"), echo("id1"),
+		assistant(`{"type":"tool_use","id":"toolu_A","name":"Bash","input":{"command":"sleep 9","run_in_background":true}}`),
+		sendf(`{"type":"system","subtype":"task_started","task_id":"bA","tool_use_id":"toolu_A","task_type":"local_bash","is_backgrounded":true}`),
+		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_A","content":"Command running in background with ID: bA."}]},`+
+			`"tool_use_result":{"backgroundTaskId":"bA"}}`),
+		result(names("id1")), claudetest.Send(idle))
+	p := start(t, nil, f)
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid, userRec("u1", "Hi"))
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
+		t.Fatal(got)
+	}
+	// claude has written the turn to the transcript.
+	p.writeHistory(t, cwd, sid, userRec("u1", "Hi"), userRec("u2", "go"),
+		asstRec("a2", "msg_2", useBlock("toolu_A", "Bash", `{"command":"sleep 9","run_in_background":true}`)),
+		userRec("r2", resultBlocks("toolu_A", "Command running in background with ID: bA.", false), "toolUseResult", map[string]any{"backgroundTaskId": "bA"}))
+	before := len(p.notes())
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, n := range p.notes()[before:] {
+		if u := n.Update.ToolCallUpdate; u != nil && claudeMeta(u.Meta)["task"] != nil {
+			b, _ := json.Marshal(u.Meta)
+			got = append(got, string(u.ToolCallID)+" "+keysSorted(b))
+		}
+	}
+	want := []string{`toolu_A {"claudeCode":{"task":{"id":"bA","status":"running","type":"local_bash"},"toolName":"Bash"}}`}
+	if !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

@@ -2,6 +2,7 @@ package claudeacp
 
 import (
 	"cmp"
+	"encoding/json"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -94,6 +95,24 @@ func (ts *tools) shellEnded(m *claudeagent.TaskNotification) {
 	ts.shellLocked(sh, task)
 }
 
+// shellNow is the task id as the live session last told of it, while
+// claude runs it or until its notification.
+func (ts *tools) shellNow(id string) (shellTask, bool) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if sh := ts.shells[id]; sh != nil {
+		return sh.task, true
+	}
+	return shellTask{}, false
+}
+
+// shell tells the client of task, as shellLocked.
+func (ts *tools) shell(sh *shell, task shellTask) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.shellLocked(sh, task)
+}
+
 // shellLocked tells the client of sh's task as task, if it is news: an
 // update of the call that started it, which says only _meta.
 func (ts *tools) shellLocked(sh *shell, task shellTask) {
@@ -105,4 +124,42 @@ func (ts *tools) shellLocked(sh *shell, task shellTask) {
 	ts.out.emit(sh.parent, acp.SessionUpdate{SessionUpdate: "tool_call_update", ToolCallUpdate: &acp.ToolCallUpdate{
 		ToolCallID: acp.ToolCallID(sh.call), Meta: meta,
 	}})
+}
+
+// A load replays a background command's end where the history has it:
+// claude's notification of it, or claude's TaskStop of it, which gets no
+// notification. The history never says a command still runs, so a
+// command's start replays only when the live session runs it: then its
+// task is as the live session has it.
+
+// shellStarted is a call's result, for a background command it started:
+// its task's id is the result's backgroundTaskId.
+func (r *replayer) shellStarted(t *tool, b claudeagent.Block, structured json.RawMessage) {
+	var res struct {
+		BackgroundTaskID string `json:"backgroundTaskId"`
+	}
+	if b.IsError || json.Unmarshal(structured, &res) != nil || res.BackgroundTaskID == "" {
+		return
+	}
+	sh := &shell{call: t.id, name: t.name, parent: t.parent}
+	r.shells[res.BackgroundTaskID] = sh
+	if task, ok := r.s.tools.shellNow(res.BackgroundTaskID); ok {
+		r.s.tools.shell(sh, task)
+	}
+}
+
+// shellEnded replays the end e of a background command the history
+// started, once.
+func (r *replayer) shellEnded(e taskNote) {
+	sh := r.shells[e.id]
+	if sh == nil || e.status == "" || sh.task.Status != "" && sh.task.Status != "running" {
+		return
+	}
+	r.s.tools.shell(sh, shellTask{ID: e.id, Type: shellType, Status: e.status, OutputFile: e.outputFile, Summary: e.summary})
+}
+
+// shellStopped replays claude's TaskStop of the task id, if a background
+// command's: it stopped.
+func (r *replayer) shellStopped(id string) {
+	r.shellEnded(taskNote{id: id, status: "stopped"})
 }

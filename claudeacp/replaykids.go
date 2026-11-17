@@ -177,6 +177,9 @@ func (r *replayer) called(t *tool, b claudeagent.Block, structured json.RawMessa
 		if kid := r.byID[in.TaskID]; kid != nil && !b.IsError {
 			kid.stopped = true
 		}
+		if !b.IsError {
+			r.shellStopped(in.TaskID)
+		}
 	case "SendMessage":
 		var res struct {
 			Success        bool   `json:"success"`
@@ -328,9 +331,10 @@ func (r *replayer) notifiedAfter(uuid string) {
 }
 
 // notified keeps what the task notifications in a user message's text
-// say of subagents' ends.
+// say of subagents' ends, and replays background commands' ends.
 func (r *replayer) notified(text string) {
 	for _, e := range taskEnds(text) {
+		r.shellEnded(e)
 		if kid := r.byID[e.id]; kid != nil {
 			if _, ok := endState(e.status, ""); ok {
 				kid.ended, kid.summary = e.status, e.summary

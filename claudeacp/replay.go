@@ -24,7 +24,8 @@ import (
 // permission requests aren't replayed. To
 // a client of subagents, each subagent is announced after the call that
 // started it, its own transcript replays on its session, and once the
-// whole history is out each says how it ended.
+// whole history is out each says how it ended. A background command's
+// end replays where the history has it (shells.go).
 
 // replayer is one replay of a session's history.
 type replayer struct {
@@ -42,6 +43,7 @@ type replayer struct {
 	// delivered are the SendMessage calls whose message a subagent's
 	// transcript has, replayed there.
 	delivered map[string]bool
+	shells    map[string]*shell // the background commands the history started, by task id
 }
 
 // queuedPrompt is a prompt claude kept other than as a user message, and
@@ -61,7 +63,7 @@ type callKey struct{ stream, id string }
 func (s *session) replay(ms []sessions.Message, t *sessions.Transcript) {
 	r := &replayer{s: s, t: t, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
 		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{},
-		queued: map[string][]queuedPrompt{}, said: map[string]bool{}, delivered: map[string]bool{}}
+		queued: map[string][]queuedPrompt{}, said: map[string]bool{}, delivered: map[string]bool{}, shells: map[string]*shell{}}
 	for _, m := range ms {
 		r.said[m.UUID] = true
 	}
@@ -219,5 +221,6 @@ func (r *replayer) toolResult(stream string, b claudeagent.Block, structured jso
 	}
 	delete(r.calls, k)
 	r.s.tools.show(t, resultReport(t.name, b, structured))
+	r.shellStarted(t, b, structured)
 	r.called(t, b, structured)
 }
