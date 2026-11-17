@@ -17,6 +17,10 @@
 // here resumes in claude's terminal (claude --resume) and the other way
 // round, and one started by claude-agent-acp loads here.
 //
+// One _meta key is its own: a background command's task, as
+// _meta.claudeCode.task on its Bash call's tool_call_update (the README
+// has its shape), so every client hears when the command ends.
+//
 // # Running it
 //
 // Main runs the agent on stdin and stdout, as an ACP client starts an

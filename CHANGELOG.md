@@ -2,6 +2,12 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## Unreleased (v0.5.0)
+
+- `claudeacp`: a background command's task reaches the client. A Bash call with `run_in_background` completes at once, but claude runs its command as a task (`local_bash`) whose start and end the agent dropped, so a client never heard that the command ended. Each change of the task now goes to every client as a `tool_call_update` of the Bash call with `_meta.claudeCode.task` `{id, type, status, outputFile?, summary?, endTime?}`: `running` as claude starts it, then claude's word for its end (`completed`; `failed`, also when killed from outside; `killed` then `stopped` for claude's `TaskStop`), in order with the turn's other updates. The call's own status stays `completed`. It is an update of the call, not an update type of its own, because the call is what a client already shows for the command and `_meta.claudeCode` is where it reads claude's facts on a call; a client that doesn't read it sees nothing new, so no capability is needed. claude-agent-acp sends these tasks only to JetBrains AIR (`async_task_*`). See the README's "Background commands".
+- `claudeacp`: `session/load` replays a background command's end where the history has it: claude's `<task-notification>` of it, or claude's `TaskStop` of it. A command an open session's claude still runs replays as running.
+- `claudeagent`: `TaskUpdated`'s `Patch` has `EndTime`, claude's `end_time` (milliseconds since the epoch).
+
 ## v0.4.0 (2026-11-14)
 
 The fixes from a whole-code review (115 findings, all of them but one), on acp-go v0.4.0. Breaking: `claudeacp.Main` returns an error, `claudeagent.CancelAsyncMessage` returns whether the message was cancelled, `CompactBoundary.CompactMetadata` is a `*CompactMetadata`, `--mcp-config` is passed a file, and `claudetest.Replay` checks what the client decided.

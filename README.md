@@ -146,6 +146,7 @@ func main() {
 | Turn output | Plans from claude's to-do tools. AskUserQuestion as a form (if the client takes form elicitation). Slash commands. Usage, cost and the context window. Session titles. claude's own notices. |
 | MCP | MCP servers from the client (stdio, HTTP, SSE). An MCP server's form or sign-in page goes to the client, if the client takes them. |
 | Subagents | Each subagent is a session of its own (the ACP subagents RFD), and each can be stopped, if the client takes them. |
+| Background commands | When a command claude left running starts and ends, on its Bash call (see [Background commands](#background-commands)). |
 
 Not supported:
 
@@ -157,6 +158,40 @@ Not supported:
   on the machine, as in the terminal.
 - **Windows** is not tested. The module builds there (CI checks that), but
   the tests run on macOS and Linux only.
+
+### Background commands
+
+A Bash call with `run_in_background` completes at once, but its command
+runs on as a claude task. Each change of that task goes to the client as
+a `tool_call_update` of the Bash call, with only `_meta`:
+
+```json
+{"sessionUpdate": "tool_call_update", "toolCallId": "toolu_…",
+ "_meta": {"claudeCode": {"toolName": "Bash", "task": {
+   "id": "bqphuo3vw", "type": "local_bash", "status": "completed",
+   "outputFile": "/tmp/claude-<uid>/…/tasks/bqphuo3vw.output",
+   "summary": "Background command \"Finish soon\" completed (exit code 0)",
+   "endTime": 1793314896880}}}}
+```
+
+- `id` is the task's id, the same as the call's
+  `toolResponse.backgroundTaskId`.
+- `status` is `running` when claude starts the task, then claude's word
+  for its end: `completed`; `failed` (a non-zero exit, or killed from
+  outside); `killed` then `stopped` for claude's `TaskStop`.
+- `endTime` (milliseconds since the epoch) comes with the end. `outputFile`
+  and `summary` come with claude's notification, a moment later. claude
+  gives the exit code only in `summary`'s text.
+- An update goes for each change, in order with the turn's other
+  updates. A subagent's command's updates name its Agent call in
+  `parentToolUseId`, as its other updates do.
+- The call's own `status` doesn't change: it stays `completed`.
+- Every client gets them; no capability is needed. claude-agent-acp
+  tells only JetBrains AIR clients of these tasks (`async_task_*`).
+- `session/load` replays a command's end where the history has it
+  (claude's notification of it, or its `TaskStop`). The history doesn't
+  say that a command still runs, so its start is replayed only for a
+  session that is open, whose claude still runs it.
 
 ## How it relates to the others
 
