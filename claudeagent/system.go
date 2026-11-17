@@ -130,6 +130,8 @@ type TaskProgress struct {
 }
 
 // TaskUpdated is a change to a task; Patch has only what changed.
+// EndTime is when the task ended, in milliseconds since the epoch, with
+// the status that ends it.
 type TaskUpdated struct {
 	Envelope
 	TaskID string `json:"task_id"`
@@ -139,6 +141,7 @@ type TaskUpdated struct {
 		Description    string `json:"description"`
 		Error          string `json:"error"`
 		IsBackgrounded *bool  `json:"is_backgrounded"`
+		EndTime        int64  `json:"end_time"`
 	} `json:"patch"`
 }
 

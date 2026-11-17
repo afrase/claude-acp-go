@@ -36,10 +36,10 @@ func TestDecodeSystem(t *testing.T) {
 			&TaskProgress{TaskID: "t1", Description: "Explore", Usage: TaskUsage{10, 2, 30}, LastToolName: "Read"},
 		},
 		{
-			`{"type":"system","subtype":"task_updated","task_id":"t1","patch":{"status":"killed","is_backgrounded":false},"uuid":"u24","session_id":"s1"}`,
+			`{"type":"system","subtype":"task_updated","task_id":"t1","patch":{"status":"killed","is_backgrounded":false,"end_time":1793314898564},"uuid":"u24","session_id":"s1"}`,
 			func() Message {
 				m, no := &TaskUpdated{TaskID: "t1"}, false
-				m.Patch.Status, m.Patch.IsBackgrounded = "killed", &no
+				m.Patch.Status, m.Patch.IsBackgrounded, m.Patch.EndTime = "killed", &no, 1793314898564
 				return m
 			}(),
 		},
