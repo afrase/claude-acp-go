@@ -2,7 +2,7 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
-## Unreleased
+## v0.6.0 (2026-11-20)
 
 - `claudeacp`: a background subagent's totals reach the client. Its Agent call ends at once (`toolResponse.status` `async_launched`), and claude tells what the subagent used only in its task notification (`usage`), which the agent dropped. They now go as a `tool_call_update` of that Agent call with only `_meta.claudeCode.toolResponse` `{totalTokens, totalToolUseCount, totalDurationMs}`, the names a foreground subagent's own response has them under, so a client reads them where it already does. `session/load` replays them from the `<usage>` of claude's `<task-notification>`, a subagent's subagent's too. See the README's "Background subagents".
 
