@@ -154,6 +154,7 @@ func (ts *tools) result(b claudeagent.Block, structured json.RawMessage, why non
 	r := resultReport(t.name, b, structured)
 	r.why = why
 	ts.sendLocked(t, r)
+	ts.launchedLocked(t, b, structured)
 	ts.out.release(t.id) // its work, if it started a subagent claude never named
 }
 

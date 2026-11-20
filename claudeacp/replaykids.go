@@ -335,6 +335,7 @@ func (r *replayer) notifiedAfter(uuid string) {
 func (r *replayer) notified(text string) {
 	for _, e := range taskEnds(text) {
 		r.shellEnded(e)
+		r.subagentEnded(e)
 		if kid := r.byID[e.id]; kid != nil {
 			if _, ok := endState(e.status, ""); ok {
 				kid.ended, kid.summary = e.status, e.summary

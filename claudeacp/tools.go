@@ -58,6 +58,10 @@ type tools struct {
 	// shells are the background commands' tasks claude runs, by task
 	// id, until claude's notification of their end (shells.go).
 	shells map[string]*shell
+	// launches are the Agent calls that started a subagent in the
+	// background, by id, until claude's notification of its end
+	// (subagenttotals.go).
+	launches map[string]launched
 }
 
 // streams is where tool calls' updates go, by the stream each call is of
@@ -76,7 +80,7 @@ const maxEarly = 64
 func (ts *tools) init(cwd string, out streams, newID func() string) {
 	ts.cwd, ts.out, ts.newID = cwd, out, newID
 	ts.byID, ts.streaming, ts.early = map[string]*tool{}, map[string]map[int]*tool{}, map[string]report{}
-	ts.shells = map[string]*shell{}
+	ts.shells, ts.launches = map[string]*shell{}, map[string]launched{}
 }
 
 // report is what an update says of a tool call; an empty field says
