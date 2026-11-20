@@ -147,6 +147,7 @@ func main() {
 | MCP | MCP servers from the client (stdio, HTTP, SSE). An MCP server's form or sign-in page goes to the client, if the client takes them. |
 | Subagents | Each subagent is a session of its own (the ACP subagents RFD), and each can be stopped, if the client takes them. |
 | Background commands | When a command claude left running starts and ends, on its Bash call (see [Background commands](#background-commands)). |
+| Background subagents | What one used (tokens, tool calls, time), on its Agent call as it ends (see [Background subagents](#background-subagents)). |
 
 Not supported:
 
@@ -192,6 +193,30 @@ a `tool_call_update` of the Bash call, with only `_meta`:
   (claude's notification of it, or its `TaskStop`). The history doesn't
   say that a command still runs, so its start is replayed only for a
   session that is open, whose claude still runs it.
+
+### Background subagents
+
+A foreground subagent's Agent call ends with what the subagent used in
+its `toolResponse` (`totalTokens`, `totalToolUseCount`,
+`totalDurationMs`). A background one's call ends at once, its
+`toolResponse` saying only `"status": "async_launched"`; claude tells what
+it used only in its task notification, as it ends. That goes to the
+client as a `tool_call_update` of the Agent call, with only `_meta`, under
+the same names:
+
+```json
+{"sessionUpdate": "tool_call_update", "toolCallId": "toolu_…",
+ "_meta": {"claudeCode": {"toolName": "Agent", "toolResponse": {
+   "totalTokens": 8152, "totalToolUseCount": 2, "totalDurationMs": 3175}}}}
+```
+
+- It comes once, with claude's notification of the subagent's end, and
+  only when that has the usage. Every client gets it; no capability is
+  needed.
+- A subagent's subagent's goes where its Agent call's updates go, naming
+  its stream in `parentToolUseId`.
+- `session/load` replays it from the `<usage>` of claude's
+  `<task-notification>` in the history.
 
 ## How it relates to the others
 

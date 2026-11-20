@@ -19,7 +19,10 @@
 //
 // One _meta key is its own: a background command's task, as
 // _meta.claudeCode.task on its Bash call's tool_call_update (the README
-// has its shape), so every client hears when the command ends.
+// has its shape), so every client hears when the command ends. And a
+// background subagent's totals go as _meta.claudeCode.toolResponse on an
+// update of its Agent call, as claude gives a foreground one's in its
+// response (the README's "Background subagents").
 //
 // # Running it
 //
