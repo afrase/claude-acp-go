@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/afrase/acp-go/process"
 )
 
 // ErrClosed is the error for what's asked of a closed session.
@@ -25,7 +27,7 @@ var ErrClosed = errors.New("claudeagent: closed")
 // lines to its stdin, its stderr's lines, and its end.
 type transport struct {
 	proc           *Proc
-	stdout, errOut *watched
+	stdout, errOut *process.Watched
 	log            *slog.Logger
 	stderr         func(string)
 	// after is the shutdown's clock, idle the one for giving up on a pipe
@@ -106,7 +108,7 @@ func newTransport(p *Proc, o Options) *transport {
 // makeTransport is a transport for p that isn't reading yet.
 func makeTransport(p *Proc, o Options) *transport {
 	t := &transport{
-		proc: p, stdout: &watched{ReadCloser: p.Stdout}, errOut: &watched{ReadCloser: p.Stderr},
+		proc: p, stdout: &process.Watched{ReadCloser: p.Stdout}, errOut: &process.Watched{ReadCloser: p.Stderr},
 		log: o.Log, stderr: o.Stderr, after: time.After, idle: time.After,
 		msgs: make(chan Message), closing: make(chan struct{}),
 		stdoutDone: make(chan struct{}), stderrDone: make(chan struct{}),
@@ -233,34 +235,11 @@ func (t *transport) waitExit() {
 // on it has waited d with nothing to read. A reader that is behind, still
 // handing on what it read, isn't given up on: what claude wrote before it
 // exited is still in the pipe, its last result maybe among it.
-func (t *transport) giveUp(w *watched, d time.Duration, ended <-chan struct{}, name string) {
-	for {
-		armed := w.edges.Load()
-		select {
-		case <-ended:
-			return
-		case <-t.idle(d):
-		}
-		if armed%2 == 1 && w.edges.Load() == armed {
-			t.log.Warn("claude exited, but a process it started holds its "+name+"; no longer reading it", "waited", d)
-			_ = w.Close()
-			return
-		}
+func (t *transport) giveUp(w *process.Watched, d time.Duration, ended <-chan struct{}, name string) {
+	if w.Drain(ended, d, t.idle) {
+		t.log.Warn("claude exited, but a process it started holds its "+name+"; no longer reading it", "waited", d)
+		_ = w.Close()
 	}
-}
-
-// watched is a pipe that tells whether its reader is waiting on it: edges
-// counts each Read's start and its end, so an odd count is a Read under
-// way.
-type watched struct {
-	io.ReadCloser
-	edges atomic.Int64
-}
-
-func (w *watched) Read(p []byte) (int, error) {
-	w.edges.Add(1)
-	defer w.edges.Add(1)
-	return w.ReadCloser.Read(p)
 }
 
 // write writes v to claude's stdin as one JSON line. Only marshalled

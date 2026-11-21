@@ -1,7 +1,6 @@
 package claudeagent
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"sync/atomic"
+
+	"github.com/afrase/acp-go/process"
 )
 
 // Spec is how to start claude: the program, its arguments after its name,
@@ -80,7 +81,9 @@ func stderrSuffix(s string) string {
 // what claude started in that group too (its stdio MCP servers, its
 // hooks). Claude Code runs each Bash command detached, leading a group of
 // its own, so no signal to claude's group reaches those. Once claude has
-// exited, Wait kills what it left in the group.
+// exited, Wait kills what it left in the group. On Windows the group is a
+// console process group and a job object, which Wait, and os.Kill's
+// Signal, end.
 //
 // With s.SharedGroup claude stays in this process's group instead: what
 // kills that group kills claude and what stays in its group too, even
@@ -92,70 +95,47 @@ func Exec(ctx context.Context, s Spec) (*Proc, error) {
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), s.Path, s.Args...) //nolint:gosec // running the user's claude is the point
 	cmd.Env, cmd.Dir = s.Env, s.Dir
 	if !s.SharedGroup {
-		ownGroup(cmd)
+		process.OwnGroup(cmd)
 	}
-	// Our own pipes, not cmd's: Wait would close those under the readers.
-	var files []*os.File
-	var pipeErr error
-	pipe := func() (r, w *os.File) {
-		r, w, err := os.Pipe()
-		if err != nil {
-			pipeErr = cmp.Or(pipeErr, err)
-			return nil, nil
-		}
-		files = append(files, r, w)
-		return r, w
-	}
-	inR, inW := pipe()
-	outR, outW := pipe()
-	errR, errW := pipe()
-	closeAll := func() {
-		for _, f := range files {
-			_ = f.Close()
-		}
-	}
-	if pipeErr != nil {
-		closeAll()
-		return nil, fmt.Errorf("claudeagent: pipes for claude: %w", pipeErr)
-	}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
-	if err := cmd.Start(); err != nil {
-		closeAll()
+	pipes, err := process.Start(cmd, true)
+	if err != nil {
 		return nil, fmt.Errorf("claudeagent: start %s: %w", s.Path, err)
 	}
-	for _, f := range []*os.File{inR, outW, errW} {
-		_ = f.Close() // claude's ends
+	c := &child{cmd: cmd}
+	if !s.SharedGroup {
+		c.group = process.NewGroup(cmd)
 	}
-	return &Proc{Stdin: inW, Stdout: outR, Stderr: errR, Process: &process{cmd: cmd, shared: s.SharedGroup}}, nil
+	return &Proc{Stdin: pipes.Stdin, Stdout: pipes.Stdout, Stderr: pipes.Stderr, Process: c}, nil
 }
 
-// process is a claude Exec started.
-type process struct {
+// child is a claude Exec started.
+type child struct {
 	cmd    *exec.Cmd
-	shared bool // in this process's group, not one of its own
+	group  *process.Group // nil when claude is in this process's group
 	exited atomic.Bool
 }
 
 // Wait waits for claude, then kills what it left in its group.
-func (p *process) Wait() error {
-	err := p.cmd.Wait()
-	p.exited.Store(true)
-	if !p.shared {
-		_ = killGroup(p.cmd) // what it left running
+func (c *child) Wait() error {
+	err := c.cmd.Wait()
+	c.exited.Store(true)
+	if c.group != nil {
+		_ = c.group.Sweep() // what it left running
+		c.group.Release()
 	}
 	return exitError(err)
 }
 
 // Signal signals claude's group, or claude alone when the group is ours
 // too.
-func (p *process) Signal(sig os.Signal) error {
-	if p.exited.Load() {
+func (c *child) Signal(sig os.Signal) error {
+	if c.exited.Load() {
 		return os.ErrProcessDone
 	}
-	if p.shared {
-		return p.cmd.Process.Signal(sig)
+	if c.group == nil {
+		return c.cmd.Process.Signal(sig)
 	}
-	return signalGroup(p.cmd, sig)
+	return c.group.Signal(sig)
 }
 
 // exitError turns exec's error into an *ExitError.
@@ -164,9 +144,5 @@ func exitError(err error) error {
 	if !errors.As(err, &ee) {
 		return err
 	}
-	e := &ExitError{Code: ee.ExitCode()}
-	if sig := exitSignal(ee); sig != nil {
-		e.Signal = sig
-	}
-	return e
+	return &ExitError{Code: ee.ExitCode(), Signal: process.ExitSignal(err)}
 }
