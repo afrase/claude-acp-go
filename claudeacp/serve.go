@@ -100,7 +100,10 @@ func (a *agent) serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	actx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	a.ctx = actx
-	conn := acp.NewClientConn(r, w, func(c *acp.ClientConn) acp.Agent {
+	// Not w itself: the connection would close it as it ends, and a
+	// client that reads it until the agent exits would stop waiting while
+	// the sessions still close.
+	conn := acp.NewClientConn(r, struct{ io.Writer }{w}, func(c *acp.ClientConn) acp.Agent {
 		a.client = c
 		return a
 	}, acp.WithReadLimit(readLimit), acp.WithLogger(a.log))
