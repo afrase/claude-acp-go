@@ -38,8 +38,7 @@ func TestCommands(t *testing.T) {
 		claudetest.Send(`{"type":"system","subtype":"init","model":"m","terminal_slash_commands":["/init"]}`),
 		claudetest.Send(`{"type":"system","subtype":"init","model":"m","terminal_slash_commands":["/init"]}`),
 		result(""), claudetest.Send(idle), signal(read))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	eventually(t, "the commands", func() bool { return len(p.commandNames()) == 1 })
 	if got := p.commandNames()[0]; got != "compact(<instructions>) review mcp:github:create_issue" {
 		t.Errorf("%s", got)

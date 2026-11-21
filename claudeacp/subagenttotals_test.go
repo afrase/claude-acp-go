@@ -72,8 +72,7 @@ func TestBackgroundSubagentTotals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := fake(user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), tc.launch,
 				sendf(end), sendf(end), result(names("id2")), claudetest.Send(idle))
-			p := start(t, tc.caps, f)
-			sid := p.open(t)
+			p, sid := startOpen(t, tc.caps, f)
 			stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 			var want []string
 			for _, w := range tc.want {
@@ -91,8 +90,7 @@ func TestBackgroundSubagentNoUsage(t *testing.T) {
 	f := fake(user("id2"), echo("id2"), agentCall(true), taskStarted(`,"is_backgrounded":true`), launchedResult,
 		sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_p","status":"stopped"}`),
 		result(names("id2")), claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	if got := totalsLines(p.notes()); got != nil {
 		t.Errorf("totals: %q", got)
@@ -116,9 +114,7 @@ func TestLoadRecordedSubagentTotals(t *testing.T) {
 		t.Fatal(err)
 	}
 	sid := "ea46184f-9ed6-43ab-9d34-7946b3cc2ceb"
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	want := []string{
 		"ad7ceac0c2765981b toolu_fake_0004 " + totalsMeta("toolu_fake_0002", `{"totalTokens":6976,"totalToolUseCount":0,"totalDurationMs":57}`),
 		sid + " toolu_fake_0002 " + totalsMeta("", `{"totalTokens":8152,"totalToolUseCount":2,"totalDurationMs":3175}`),

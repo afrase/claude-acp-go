@@ -41,8 +41,7 @@ func TestStream(t *testing.T) {
 		event(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`),
 		result(names("id2")+`,"origin":{"kind":"human","producer":"p"},"modelUsage":{"claude-x[1m]":{"contextWindow":900000}}`),
 		claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	r, err := p.prompt(t, sid, "hi")()
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +81,7 @@ func TestStream(t *testing.T) {
 // zeros).
 func TestResultText(t *testing.T) {
 	f := fake(user("id2"), claudetest.Send(`{"type":"result","subtype":"success","uuid":"r1","result":"Context: 5%","total_cost_usd":0}`), claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	stopsWith(t, p.prompt(t, sid, "/context"), "end_turn")
 	if got := p.texts(); !slices.Equal(got, []string{"text:r1:Context: 5%"}) {
 		t.Errorf("%q", got)

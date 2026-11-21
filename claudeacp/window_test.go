@@ -50,15 +50,13 @@ func sessionWindow(p *peer, sid acp.SessionID) (int, bool) {
 // counts, for the agent's next session too, which asks nothing. A model
 // change asks again, unless a result has said that model's window.
 func TestWindow(t *testing.T) {
-	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
 	f1 := windowAnswer(started(windowInit, `null`, user("id2"), echo("id2"),
 		event(`{"type":"message_start","message":{"id":"msg_1","model":"claude-x","usage":{"input_tokens":10}}}`),
 		result(names("id2")+`,"modelUsage":{"claude-x":{"contextWindow":950000}}`),
 		claudetest.Send(idle)), "1000000")
-	f1.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`, ok)
+	f1.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`, controlOK)
 	f2 := windowAnswer(started(windowInit, `null`), "1000000")
-	p := start(t, nil, f1, f2)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f1, f2)
 	eventually(t, "the asked window", func() bool { n, _ := sessionWindow(p, sid); return n == 1_000_000 })
 	stopsWith(t, p.prompt(t, sid, "hi"), "end_turn")
 	var sizes []uint64

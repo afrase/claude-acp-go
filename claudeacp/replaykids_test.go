@@ -23,9 +23,8 @@ import (
 // The subagents stay the session's: cancelling one's session stops it.
 func TestLoadReplaysSubagents(t *testing.T) {
 	f := fake()
-	f.Respond(`{"type":"control_request","request":{"subtype":"stop_task"}}`,
-		`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, f)
+	f.Respond(`{"type":"control_request","request":{"subtype":"stop_task"}}`, controlOK)
+	p := start(t, withSubagents, f)
 	cwd, sid := t.TempDir(), nthUUID(1)
 	agent := func(id, input string) map[string]any { return useBlock(id, "Agent", input) }
 	p.writeHistory(t, cwd, sid,
@@ -55,9 +54,7 @@ func TestLoadReplaysSubagents(t *testing.T) {
 	for _, id := range []string{"C", "D", "E"} {
 		p.writeSubagent(t, cwd, sid, "agent"+id, "toolu_"+id, asstRec(id+"1", "msg_"+id, textBlock("on it")))
 	}
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	announce := func(id, title, desc string) string {
 		head := `{"sessionId":"agent` + id + `",`
 		if title != "" {
@@ -122,7 +119,7 @@ func TestLoadReplaysSubagents(t *testing.T) {
 // when the error names a stop, as the user's stop of it was live (the
 // stop itself isn't in the transcript), else failed with the error.
 func TestLoadSubagentLaunchErrors(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	errs := map[string]string{
 		"I": "[Request interrupted by user for tool use]",
@@ -137,9 +134,7 @@ func TestLoadSubagentLaunchErrors(t *testing.T) {
 		p.writeSubagent(t, cwd, sid, "agent"+id, "toolu_"+id, asstRec(id+"1", "msg_s"+id, textBlock("on it")))
 	}
 	p.writeHistory(t, cwd, sid, recs...)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var ends []string
 	for _, l := range p.replayed() {
 		if strings.Contains(l, `"state":{"state":"idle"`) {
@@ -155,9 +150,7 @@ func TestLoadSubagentLaunchErrors(t *testing.T) {
 		ended("K", `{"state":"idle","stopReason":"cancelled"}`),
 		ended("F", `{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"`+errs["F"]+`"}}`),
 	}
-	if !slices.Equal(ends, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(ends, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, ends, want)
 }
 
 // claude may run a subagent in the background with no run_in_background
@@ -165,7 +158,7 @@ func TestLoadSubagentLaunchErrors(t *testing.T) {
 // goes by it, so the call's result is no end of a background one, and a
 // stopped one ends cancelled.
 func TestLoadSubagentSidecar(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid,
 		userRec("u1", "Go"),
@@ -185,9 +178,7 @@ func TestLoadSubagentSidecar(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var ends []string
 	for _, l := range p.replayed() {
 		if strings.Contains(l, `"state":{"state":"idle"`) {
@@ -198,16 +189,14 @@ func TestLoadSubagentSidecar(t *testing.T) {
 		return sid + " subagent " + `{"sessionId":"agent` + id + `","state":` + state + `}`
 	}
 	want := []string{ended("B", `{"state":"idle"}`), ended("S", `{"state":"idle","stopReason":"cancelled"}`)}
-	if !slices.Equal(ends, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(ends, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, ends, want)
 }
 
 // A fork child's transcript starts with a copy of the message that
 // launched it and a directive message: a load replays the fork's own
 // work alone, so the parent's calls stay the parent's.
 func TestLoadForkSubagent(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	fork := useBlock("toolu_F", "Agent", `{"description":"Fork","subagent_type":"fork","prompt":"do x"}`)
 	bg := useBlock("toolu_G", "Agent", `{"description":"Bg","prompt":"do y","run_in_background":true}`)
@@ -230,9 +219,7 @@ func TestLoadForkSubagent(t *testing.T) {
 		asstRec("f4", "msg_F1", textBlock("x done")),
 	)
 	p.writeSubagent(t, cwd, sid, "agentG", "toolu_G", asstRec("g1", "msg_G", textBlock("y")))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	announce := func(id, title, desc string) string {
 		head := `{"sessionId":"agent` + id + `",`
 		if title != "" {
@@ -265,7 +252,7 @@ func TestLoadForkSubagent(t *testing.T) {
 // A call's result ends the call of its own transcript: a subagent's call
 // with the id of one of the main agent's doesn't take the main agent's.
 func TestLoadRepeatedCallID(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid,
 		userRec("u1", "Go"),
@@ -276,9 +263,7 @@ func TestLoadRepeatedCallID(t *testing.T) {
 		asstRec("s1", "msg_A", useBlock("toolu_A", "Bash", `{"command":"true"}`)),
 		userRec("s2", resultBlocks("toolu_A", "inner", false)),
 	)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	got := p.replayed()
 	for _, want := range []string{"agentA update toolu_A completed", sid + " update toolu_A completed"} {
 		if !slices.Contains(got, want) {
@@ -306,7 +291,7 @@ func TestLoadSubagentDelivery(t *testing.T) {
 			"agentA message s3", "agentA text msg_A2 2 parent=toolu_A", "agentA message toolu_S"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+			p := start(t, withSubagents, fake())
 			cwd, sid := t.TempDir(), nthUUID(1)
 			p.writeHistory(t, cwd, sid,
 				userRec("u1", "Count"),
@@ -321,18 +306,14 @@ func TestLoadSubagentDelivery(t *testing.T) {
 				userRec("s3", "The coordinator sent a message while you were working:\nagain", "origin", map[string]any{"kind": "coordinator"}),
 				asstRec("s4", "msg_A2", textBlock("2")),
 			)
-			if _, err := p.load(sid, cwd); err != nil {
-				t.Fatal(err)
-			}
+			p.mustLoad(t, sid, cwd)
 			var got []string
 			for _, l := range p.replayed() {
 				if strings.HasPrefix(l, "agentA ") {
 					got = append(got, l)
 				}
 			}
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
-			}
+			sameLines(t, got, tc.want)
 			// Its first call's result is still its end, the message having
 			// run it again first.
 			if end := sid + ` subagent {"sessionId":"agentA","state":{"state":"idle","stopReason":"end_turn"}}`; !slices.Contains(p.replayed(), end) {
@@ -352,7 +333,7 @@ func TestLoadOpenSessionSubagents(t *testing.T) {
 		sendf(`{"type":"system","subtype":"task_started","task_id":"agentB","tool_use_id":"toolu_B","task_type":"local_agent","is_backgrounded":true}`),
 		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_B","content":"Async agent launched"}]}}`),
 		result(names("id1")), claudetest.Send(idle))
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, f)
+	p := start(t, withSubagents, f)
 	cwd, sid := t.TempDir(), nthUUID(1)
 	history := []rec{
 		userRec("u1", "Count"),
@@ -361,9 +342,7 @@ func TestLoadOpenSessionSubagents(t *testing.T) {
 	}
 	p.writeHistory(t, cwd, sid, history...)
 	p.writeSubagent(t, cwd, sid, "agentA", "toolu_A", asstRec("s1", "msg_A1", textBlock("2")))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	stopsWith(t, p.prompt(t, acp.SessionID(sid), "go"), "end_turn")
 	// claude has written the turn to the transcript.
 	p.writeHistory(t, cwd, sid, append(history, userRec("u2", "go"),
@@ -371,9 +350,7 @@ func TestLoadOpenSessionSubagents(t *testing.T) {
 		userRec("r2", resultBlocks("toolu_B", "Async agent launched", false)))...)
 	p.writeSubagent(t, cwd, sid, "agentB", "toolu_B", asstRec("b1", "msg_B1", textBlock("working")))
 	before := len(p.notes())
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var got []string
 	for _, l := range p.replayed()[before:] {
 		if strings.Contains(l, "agent") {
@@ -390,9 +367,7 @@ func TestLoadOpenSessionSubagents(t *testing.T) {
 		sid + ` subagent {"sessionId":"agentA","state":{"state":"idle","stopReason":"end_turn"}}`,
 		sid + ` subagent {"sessionId":"agentB","state":{"state":"running"}}`,
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, got, want)
 }
 
 // A task notification claude took into a running turn is kept only as a
@@ -401,7 +376,7 @@ func TestLoadOpenSessionSubagents(t *testing.T) {
 // subagents' ends, in the transcript's order with the user messages', so
 // the last about a subagent says how it ended.
 func TestLoadSubagentsQueuedEnds(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	var recs []rec
 	recs = append(recs, userRec("u1", "Go"))
@@ -425,9 +400,7 @@ func TestLoadSubagentsQueuedEnds(t *testing.T) {
 	for _, id := range []string{"B", "C", "D"} {
 		p.writeSubagent(t, cwd, sid, "agent"+id, "toolu_"+id, asstRec(id+"1", "msg_"+id, textBlock("on it")))
 	}
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var ends []string
 	for _, l := range p.replayed() {
 		if strings.Contains(l, `"state":{"state":"idle"`) {
@@ -442,9 +415,7 @@ func TestLoadSubagentsQueuedEnds(t *testing.T) {
 		ended("C", `{"state":"idle","stopReason":"cancelled"}`),
 		ended("D", `{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"D broke"}}`),
 	}
-	if !slices.Equal(ends, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(ends, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, ends, want)
 }
 
 // endNote is a task notification, queued a queued_command attachment, and
@@ -471,7 +442,7 @@ func queueOp(op, content string) rec {
 // names the subagent in that transcript too. The notification about one
 // subagent doesn't end another's.
 func TestLoadNestedSubagentEnds(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	background := func(desc string) string {
 		return `{"description":"` + desc + `","prompt":"go","run_in_background":true}`
@@ -498,9 +469,7 @@ func TestLoadNestedSubagentEnds(t *testing.T) {
 	p.writeSubagent(t, cwd, sid, "agentI", "", asstRec("i1", "msg_I", textBlock("on it")))
 	p.writeSubagent(t, cwd, sid, "agentJ", "toolu_J", asstRec("j1", "msg_J", textBlock("on it")))
 	p.writeSubagent(t, cwd, sid, "agentK", "toolu_K", asstRec("k1", "msg_K", textBlock("on it")))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var ends []string
 	for _, l := range p.replayed() {
 		if strings.Contains(l, `"state":{"state":"idle"`) {
@@ -516,9 +485,7 @@ func TestLoadNestedSubagentEnds(t *testing.T) {
 		ended("agentO", "J", `{"state":"idle","stopReason":"cancelled"}`),
 		ended("agentO", "K", `{"state":"idle"}`),
 	}
-	if !slices.Equal(ends, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(ends, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, ends, want)
 }
 
 // On claude's own transcripts (a recorded run of nested subagents), a
@@ -526,7 +493,7 @@ func TestLoadNestedSubagentEnds(t *testing.T) {
 // the turn of the one that started it, and that one's own.
 func TestLoadRecordedNestedSubagent(t *testing.T) {
 	history := filepath.Join("testdata", "nested") // claude's transcripts at the run's end
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd := t.TempDir()
 	project := sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.ProjectDir(cwd)
 	if err := os.MkdirAll(filepath.Dir(project), 0o700); err != nil {
@@ -540,9 +507,7 @@ func TestLoadRecordedNestedSubagent(t *testing.T) {
 		t.Fatalf("the recording's session: %v %v", found, err)
 	}
 	sid := strings.TrimSuffix(filepath.Base(found[0]), ".jsonl")
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var ends []string
 	for _, l := range p.replayed() {
 		if strings.Contains(l, `"state":{"state":"idle"`) {
@@ -570,9 +535,7 @@ func TestLoadSubagentsFlat(t *testing.T) {
 		userRec("r1", resultBlocks("toolu_A", "2", false)),
 	)
 	p.writeSubagent(t, cwd, sid, "agentA", "toolu_A", asstRec("s1", "msg_A1", textBlock("2")))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	want := []string{sid + " user u1 Count", sid + " call toolu_A Count pending", sid + " update toolu_A completed", sid + " commands"}
 	if got := p.replayed(); !slices.Equal(got, want) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

@@ -41,8 +41,7 @@ func TestModelSwitchFollowed(t *testing.T) {
 		claudetest.Send(idle))
 	f := withTitle(claudetest.New(steps...), `null`)
 	windowScripted.Store(f, true)
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	stopsWith(t, p.prompt(t, sid, "hi"), "end_turn")
 	var opts []string
 	for _, u := range p.of("config_option_update") {
@@ -72,8 +71,7 @@ func TestModelSwitchResultOfOldModel(t *testing.T) {
 		user("id3"), echo("id3")}
 	steps = append(steps, modelSwitch("h1", "command", `"claude-y"`)...)
 	steps = append(steps, result(names("id3")+`,"modelUsage":{"claude-x":{"contextWindow":1000000}}`), claudetest.Send(idle))
-	p := start(t, nil, windowAnswer(started(windowInit, `null`, steps...), "600000"))
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, windowAnswer(started(windowInit, `null`, steps...), "600000"))
 	for _, prompt := range []string{"hi", "/model big"} {
 		stopsWith(t, p.prompt(t, sid, prompt), "end_turn")
 	}

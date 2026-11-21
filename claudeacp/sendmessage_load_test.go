@@ -52,9 +52,7 @@ func TestLoadReplaysSendMessage(t *testing.T) {
 		userRec("s3", "count again"),
 		asstRec("s4", "msg_A2", textBlock("2")),
 	)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var got []string
 	for _, l := range p.replayed() {
 		if strings.Contains(l, "toolu_M") || strings.Contains(l, "toolu_F") || strings.Contains(l, "toolu_X") || strings.Contains(l, `"state":{"state":"idle"`) {

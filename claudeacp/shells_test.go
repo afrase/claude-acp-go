@@ -142,8 +142,7 @@ func TestShellTasks(t *testing.T) {
 				t.Fatal(err)
 			}
 			fk := withTitle(claudetest.Replay(c), `null`)
-			p := start(t, nil, fk)
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, fk)
 			for _, prompt := range tc.prompts {
 				select {
 				case <-fk.Awaiting(`{"type":"user"}`):
@@ -177,8 +176,7 @@ func TestShellTasksNotSubagents(t *testing.T) {
 		sendf(`{"type":"system","subtype":"task_updated","task_id":"a1","patch":{"status":"killed","end_time":1793314898564}}`),
 		sendf(`{"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_p","status":"stopped","output_file":"/tmp/claude/tasks/a1.output","summary":"Count"}`),
 		result(names("id2")), claudetest.Send(idle))
-	p := start(t, withSubagents, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, withSubagents, f)
 	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	want := []string{
 		"s1 call toolu_p Agent pending",
@@ -211,8 +209,7 @@ func TestShellTaskOfSubagent(t *testing.T) {
 		sendf(`{"type":"system","subtype":"task_updated","task_id":"b1","patch":{"status":"completed","end_time":7}}`),
 		sendf(`{"type":"system","subtype":"task_notification","task_id":"b1","tool_use_id":"toolu_1","status":"completed","output_file":"/tmp/claude/tasks/b1.output"}`),
 		result(names("id2")), claudetest.Send(idle))
-	p := start(t, withSubagents, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, withSubagents, f)
 	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	var got []string
 	for _, n := range p.notes() {
@@ -226,9 +223,7 @@ func TestShellTaskOfSubagent(t *testing.T) {
 		`a1 toolu_1 {"claudeCode":{"parentToolUseId":"toolu_p","task":{"endTime":7,"id":"b1","status":"completed","type":"local_bash"},"toolName":"Bash"}}`,
 		`a1 toolu_1 {"claudeCode":{"parentToolUseId":"toolu_p","task":{"endTime":7,"id":"b1","outputFile":"/tmp/claude/tasks/b1.output","status":"completed","type":"local_bash"},"toolName":"Bash"}}`,
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, got, want)
 }
 
 // A load replays a background command's end where the history has it,
@@ -263,9 +258,7 @@ func TestLoadReplaysShellEnds(t *testing.T) {
 			"toolUseResult", map[string]any{"task_id": "bC", "task_type": "local_bash"}),
 	)
 	p.writeHistory(t, cwd, sid, records...)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	task := func(call, task string) string {
 		return sid + " task toolu_" + call + " " + keysSorted([]byte(`{"claudeCode":{"toolName":"Bash","task":`+task+`}}`))
 	}
@@ -294,9 +287,7 @@ func TestLoadReplaysShellEnds(t *testing.T) {
 			got[i] = string(n.SessionID) + " task " + string(u.ToolCallID) + " " + keysSorted(b)
 		}
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, got, want)
 }
 
 // A load of a session that is open already replays a background command
@@ -311,18 +302,14 @@ func TestLoadOpenSessionShell(t *testing.T) {
 	p := start(t, nil, f)
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid, userRec("u1", "Hi"))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	stopsWith(t, p.prompt(t, acp.SessionID(sid), "go"), "end_turn")
 	// claude has written the turn to the transcript.
 	p.writeHistory(t, cwd, sid, userRec("u1", "Hi"), userRec("u2", "go"),
 		asstRec("a2", "msg_2", useBlock("toolu_A", "Bash", `{"command":"sleep 9","run_in_background":true}`)),
 		userRec("r2", resultBlocks("toolu_A", "Command running in background with ID: bA.", false), "toolUseResult", map[string]any{"backgroundTaskId": "bA"}))
 	before := len(p.notes())
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var got []string
 	for _, n := range p.notes()[before:] {
 		if u := n.Update.ToolCallUpdate; u != nil && claudeMeta(u.Meta)["task"] != nil {
@@ -331,7 +318,5 @@ func TestLoadOpenSessionShell(t *testing.T) {
 		}
 	}
 	want := []string{`toolu_A {"claudeCode":{"task":{"id":"bA","status":"running","type":"local_bash"},"toolName":"Bash"}}`}
-	if !slices.Equal(got, want) {
-		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	sameLines(t, got, want)
 }

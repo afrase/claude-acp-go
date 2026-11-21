@@ -61,8 +61,7 @@ func TestSubagentsRecording(t *testing.T) {
 		t.Fatal(err)
 	}
 	fk := withTitle(claudetest.Replay(c), `null`)
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fk)
-	sid := p.open(t)
+	p, sid := startOpen(t, withSubagents, fk)
 	until := func(child, call string) {
 		eventually(t, "the call "+call, func() bool {
 			return slices.ContainsFunc(p.notes(), func(n acp.SessionNotification) bool {

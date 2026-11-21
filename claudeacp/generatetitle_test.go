@@ -45,8 +45,7 @@ func TestGenerateTitle(t *testing.T) {
 	taken, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	f := started(`{}`, `" Relay restart plan "`, user("id2"), echo("id2"), signal(taken), claudetest.Do(func() { <-release }),
 		assistant(`{"type":"text","text":"Sure."}`), result(names("id2")), claudetest.Send(idle), signal(done))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	w := p.prompt(t, sid, "Fix the relay")
 	wait(t, taken, "the prompt taken")
 
@@ -83,8 +82,7 @@ func TestGenerateTitle(t *testing.T) {
 // No title is an answer, not an error; a session that isn't open, or no
 // text, is refused.
 func TestGenerateTitleNone(t *testing.T) {
-	p := start(t, nil, fake())
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, fake())
 	var r GenerateTitleResponse
 	if err := p.Call(t.Context(), GenerateTitleMethod, GenerateTitleRequest{SessionID: string(sid), Text: "hello there"}, &r); err != nil || r.Title != nil {
 		t.Fatalf("%v %v", r.Title, err)

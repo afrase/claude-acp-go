@@ -70,9 +70,7 @@ func TestDeleteSession(t *testing.T) {
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid, userRec(nthUUID(2), "hello"))
 	p.writeSubagent(t, cwd, sid, "agentA", "toolu_A", asstRec(nthUUID(3), "msg_1", textBlock("hi")))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	for _, id := range []string{sid, sid, nthUUID(9)} {
 		if _, err := p.DeleteSession(context.Background(), &acp.DeleteSessionRequest{SessionID: acp.SessionID(id)}); err != nil {
 			t.Fatal(err)
@@ -102,8 +100,7 @@ func TestDeleteSession(t *testing.T) {
 func TestDeleteWhileClosing(t *testing.T) {
 	taken, release := make(chan struct{}), make(chan struct{})
 	f := fake(user("id2"), echo("id2"), signal(taken), claudetest.Until(release))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	_ = p.prompt(t, sid, "go")
 	wait(t, taken, "the prompt taken")
 	closed := make(chan struct{})

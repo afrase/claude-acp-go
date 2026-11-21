@@ -23,8 +23,7 @@ func TestErrorKindPerTurn(t *testing.T) {
 		user("id3"), echo("id3"),
 		sendf(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["it broke"],"user_message_uuids":["id3"]}`),
 		claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	kind := func(text string) string {
 		_, err := p.prompt(t, sid, text)()
 		var e *acp.Error
@@ -50,8 +49,7 @@ func TestSyntheticModel(t *testing.T) {
 		sendf(`{"type":"assistant","error":"server_error","message":{"id":"m2","model":"<synthetic>","content":[{"type":"text","text":"API Error: 500"}]}}`),
 		result(names("id2")+`,"modelUsage":{"claude-opus-5-5":{"contextWindow":200000},"claude-haiku-4-5":{"contextWindow":1000000}}`),
 		claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	_ = stopReason(p.prompt(t, sid, "go"))
 	us := p.of("usage_update")
 	if len(us) == 0 {
@@ -103,8 +101,7 @@ func TestQuota(t *testing.T) {
 		user("id3"), echo("id3"),
 		result(names("id3")+`,"modelUsage":{"claude-opus-5-5":{"inputTokens":910,"outputTokens":95},"claude-haiku-4-5":{"inputTokens":7,"cacheReadInputTokens":2}}`),
 		claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	quota := func(text string) string {
 		r, err := p.prompt(t, sid, text)()
 		if err != nil {

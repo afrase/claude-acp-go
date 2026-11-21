@@ -140,6 +140,9 @@ func (c *clock) fire(t *testing.T, d time.Duration) {
 	}
 }
 
+// controlOK is claude's empty success answer to a control request.
+const controlOK = `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
+
 // start runs an agent whose sessions start the fakes in turn, and
 // initializes it with caps. Ids it makes are id1, id2 and so on.
 func start(t *testing.T, caps *acp.ClientCapabilities, fakes ...*claudetest.Fake) *peer {
@@ -152,8 +155,7 @@ func start(t *testing.T, caps *acp.ClientCapabilities, fakes ...*claudetest.Fake
 		if _, ok := windowScripted.Load(f); ok {
 			continue
 		}
-		f.Respond(`{"type":"control_request","request":{"subtype":"get_context_usage"}}`,
-			`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)
+		f.Respond(`{"type":"control_request","request":{"subtype":"get_context_usage"}}`, controlOK)
 	}
 	var spawned atomic.Int32
 	a := newAgent(Config{CLIPath: "/claude", ConfigDir: t.TempDir(), Spawn: func(ctx context.Context, s claudeagent.Spec) (*claudeagent.Proc, error) {
@@ -234,6 +236,14 @@ func (p *peer) open(t *testing.T) acp.SessionID {
 	return r.SessionID
 }
 
+// startOpen is start followed by open.
+func startOpen(t *testing.T, caps *acp.ClientCapabilities, fakes ...*claudetest.Fake) (*peer, acp.SessionID) {
+	t.Helper()
+	p := start(t, caps, fakes...)
+	sid := p.open(t)
+	return p, sid
+}
+
 // prompt sends text as a prompt and returns once it is written to the
 // agent; wait waits for its answer.
 func (p *peer) prompt(t *testing.T, sid acp.SessionID, text string) (wait func() (*acp.PromptResponse, error)) {
@@ -265,6 +275,14 @@ func stopsWith(t *testing.T, wait func() (*acp.PromptResponse, error), want stri
 	}
 }
 
+// sameLines reports got and want, a line each, unless they are equal.
+func sameLines(t *testing.T, got, want []string) {
+	t.Helper()
+	if !slices.Equal(got, want) {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // eventually waits for ok, checking each millisecond, for guard at most.
 func eventually(t *testing.T, what string, ok func() bool) {
 	t.Helper()
@@ -293,11 +311,10 @@ func fake(steps ...claudetest.Step) *claudetest.Fake { return started(`{}`, `nul
 // started is fake with init as its answer to initialize, and title (JSON)
 // as the title it makes.
 func started(init, title string, steps ...claudetest.Step) *claudetest.Fake {
-	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
 	initOK := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":` + init + `}}`
 	f := claudetest.New(append([]claudetest.Step{claudetest.Expect(initRequest), claudetest.Send(initOK)}, steps...)...)
-	f.Respond(`{"type":"control_request","request":{"subtype":"interrupt"}}`, ok)
-	f.Respond(`{"type":"control_request","request":{"subtype":"cancel_async_message"}}`, ok)
+	f.Respond(`{"type":"control_request","request":{"subtype":"interrupt"}}`, controlOK)
+	f.Respond(`{"type":"control_request","request":{"subtype":"cancel_async_message"}}`, controlOK)
 	return withTitle(f, title)
 }
 

@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	acp "github.com/afrase/acp-go/unstable"
-
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
 )
 
@@ -51,8 +49,7 @@ func TestStreamImage(t *testing.T) {
 	f := fake(user("id2"), echo("id2"),
 		claudetest.Send(`{"type":"assistant","message":{"id":"msg_1","model":"claude-x","content":[`+pngBlock+`,`+urlBlock+`,`+emptyBlock+`]}}`),
 		result(names("id2")), claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	stopsWith(t, p.prompt(t, sid, "draw"), "end_turn")
 	want := []string{"msg_1:image/png:iVBORw0KGgo=:", "msg_1:::https://example.com/a.png"}
 	if got := p.images("agent_message_chunk"); !slices.Equal(got, want) {
@@ -72,9 +69,7 @@ func TestLoadReplaysImages(t *testing.T) {
 		asstRec("a1", "msg_1", block(urlBlock)),
 		asstRec("a2", "msg_1", textBlock("A picture.")),
 	)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	if got := p.images("user_message_chunk"); !slices.Equal(got, []string{"u1:image/png:iVBORw0KGgo=:"}) {
 		t.Errorf("the user's: %q", got)
 	}
@@ -89,7 +84,7 @@ func TestLoadReplaysImages(t *testing.T) {
 
 // A subagent's images replay on its own session, not the user's.
 func TestLoadReplaysSubagentImage(t *testing.T) {
-	p := start(t, &acp.ClientCapabilities{Subagents: &acp.SubagentCapabilities{}}, fake())
+	p := start(t, withSubagents, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid,
 		userRec("u1", "Look"),
@@ -100,9 +95,7 @@ func TestLoadReplaysSubagentImage(t *testing.T) {
 		userRec("s1", []any{textBlock("look"), jsonMap(t, pngBlock)}),
 		asstRec("s2", "msg_A", jsonMap(t, urlBlock)),
 	)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	var got []string
 	for _, n := range p.notes() {
 		if ch := n.Update.AgentMessageChunk; ch != nil && ch.Content.Image != nil {

@@ -21,6 +21,14 @@ func (p *peer) load(sid, cwd string) (*acp.LoadSessionResponse, error) {
 	return p.LoadSession(context.Background(), &acp.LoadSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd, MCPServers: []acp.MCPServer{}})
 }
 
+// mustLoad is load, failing the test on an error.
+func (p *peer) mustLoad(t *testing.T, sid, cwd string) {
+	t.Helper()
+	if _, err := p.load(sid, cwd); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // session/load resumes claude on the session and replays its history as
 // claude-agent-acp does: the user's messages under claude's uuids, the
 // model's under the API's ids, each call with its whole input then its
@@ -81,9 +89,7 @@ func TestLoadCallWithNoResult(t *testing.T) {
 	p := start(t, nil, fake())
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid, userRec("u1", "Run it"), asstRec("a1", "msg_1", useBlock("toolu_x", "Bash", `{"command":"sleep 100"}`)))
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	want := []string{sid + " user u1 Run it", sid + " call toolu_x sleep 100 pending", sid + " update toolu_x failed", sid + " commands"}
 	if got := p.replayed(); !slices.Equal(got, want) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -114,9 +120,7 @@ func TestLoadPromptTakenIntoTurn(t *testing.T) {
 		attachment("q4", map[string]any{"prompt": "Fix it", "source_uuid": "u1"}),
 		asstRec("a2", "msg_2", textBlock("Done, with a test.")),
 	)
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	want := []string{
 		sid + " user u1 Fix it",
 		sid + " call toolu_1 go test pending",
@@ -250,9 +254,7 @@ func TestResume(t *testing.T) {
 			t.Fatalf("%+v %v", r, err)
 		}
 	}
-	if _, err := p.load(sid, cwd); err != nil {
-		t.Fatal(err)
-	}
+	p.mustLoad(t, sid, cwd)
 	want := []string{sid + " commands", sid + " commands", sid + " user u1 hello", sid + " text msg_1 hi", sid + " commands"}
 	if got := p.replayed(); !slices.Equal(got, want) {
 		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -294,9 +296,8 @@ func TestResumedModel(t *testing.T) {
 // starts claude again so, in the mode the session was in; one set up the
 // same is answered as it is.
 func TestResumeMoved(t *testing.T) {
-	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
 	f1, f2 := fake(), fake()
-	f1.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, ok)
+	f1.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, controlOK)
 	p := start(t, nil, f1, f2)
 	cwd, moved, sid := t.TempDir(), t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid, userRec("u1", "hello"), asstRec("a1", "msg_1", textBlock("hi")))

@@ -123,10 +123,8 @@ func TestExitPlanModeModelChanged(t *testing.T) {
 		canUseTool("toolu_1", "ExitPlanMode", plan, ""),
 		answers("toolu_1", `{"behavior":"allow","updatedPermissions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}`),
 		toolDone, result(names("id2")), claudetest.Send(idle))
-	f.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`,
-		`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)
-	p := start(t, nil, f)
-	sid := p.open(t)
+	f.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`, controlOK)
+	p, sid := startOpen(t, nil, f)
 	var options string
 	p.permit = func(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
 		options = optionIDs(req)

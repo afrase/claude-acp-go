@@ -66,7 +66,7 @@ func TestToolLifecycle(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	f := withTitle(claudetest.New(append([]claudetest.Step{
 		claudetest.Expect(`{"type":"control_request","request":{"subtype":"initialize","hooks":{"PostModelSwitch":[{"hookCallbackIds":["hook_0"]}],"PostToolUse":[{"hookCallbackIds":["hook_1"]}]}}}`),
-		claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
+		claudetest.Send(controlOK),
 	}, steps...)...), `null`)
 	p := start(t, nil, f)
 	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
@@ -137,11 +137,11 @@ func TestUnfinishedTools(t *testing.T) {
 		{"no result", []claudetest.Step{started, assistant(`{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`), result(names("id2"))}, false,
 			"The turn ended with no result for this call.", "error: Claude ended the turn without a tool's result."},
 		{"cancelled", []claudetest.Step{started, claudetest.Expect(`{"type":"control_request","request":{"subtype":"interrupt"}}`),
-			claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
+			claudetest.Send(controlOK),
 			claudetest.Send(idle)}, true,
 			"The turn was cancelled before this call had a result.", "cancelled"},
 		{"cancelled, then a result", []claudetest.Step{started, claudetest.Expect(`{"type":"control_request","request":{"subtype":"interrupt"}}`),
-			claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
+			claudetest.Send(controlOK),
 			result(names("id2"))}, true,
 			"The turn was cancelled before this call had a result.", "cancelled"},
 	} {
@@ -151,9 +151,8 @@ func TestUnfinishedTools(t *testing.T) {
 				event(`{"type":"message_start","message":{"id":"msg_1"}}`), signal(at)}, tc.steps...)
 			steps = append(steps, claudetest.Send(idle))
 			f := withTitle(claudetest.New(append([]claudetest.Step{claudetest.Expect(initRequest),
-				claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`)}, steps...)...), `null`)
-			p := start(t, nil, f)
-			sid := p.open(t)
+				claudetest.Send(controlOK)}, steps...)...), `null`)
+			p, sid := startOpen(t, nil, f)
 			w := p.prompt(t, sid, "go")
 			if tc.cancel {
 				wait(t, at, "the message's start")
@@ -258,8 +257,7 @@ func TestLateBackstop(t *testing.T) {
 		event(`{"type":"message_start","message":{"id":"msg_1"}}`),
 		event(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read"}}`),
 		signal(at), claudetest.Until(release), result(names("id2")), claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	w := p.prompt(t, sid, "go")
 	wait(t, at, "the call's start")
 	eventually(t, "the call", func() bool { return len(p.of("tool_call")) == 1 })

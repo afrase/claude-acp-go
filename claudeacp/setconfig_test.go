@@ -35,11 +35,10 @@ func requests(t *testing.T, f *claudetest.Fake) []string {
 // setter is a fake claude that takes every change of mode, model and
 // settings.
 func setter(init string) *claudetest.Fake {
-	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
 	f := started(init, `null`)
-	f.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, ok)
-	f.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`, ok)
-	f.Respond(`{"type":"control_request","request":{"subtype":"apply_flag_settings"}}`, ok)
+	f.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, controlOK)
+	f.Respond(`{"type":"control_request","request":{"subtype":"set_model"}}`, controlOK)
+	f.Respond(`{"type":"control_request","request":{"subtype":"apply_flag_settings"}}`, controlOK)
 	return f
 }
 
@@ -106,8 +105,7 @@ func TestSetConfigOption(t *testing.T) {
 // claude nothing.
 func TestSetConfigOptionRefused(t *testing.T) {
 	f := setter(strings.Replace(initAnswer, `"claude-opus-5-5","current_permission_mode"`, `"haiku","current_permission_mode"`, 1))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	for _, tc := range [][2]string{{"effort", "high"}, {"fast", "on"}, {"model", "gpt"}, {"agent", "nobody"}, {"mode", "dontAsk"}, {"colour", "red"}} {
 		_, err := p.SetSessionConfigOption(t.Context(), &acp.SetSessionConfigOptionRequest{SessionID: sid, ConfigID: acp.SessionConfigID(tc[0]),
 			ValueID: &acp.SetSessionConfigOptionRequestValueID{Value: acp.SessionConfigValueID(tc[1])}})
@@ -125,12 +123,10 @@ func TestSetConfigOptionRefused(t *testing.T) {
 // refused, and no longer offered.
 func TestSetMode(t *testing.T) {
 	refuse := `{"type":"control_response","response":{"subtype":"error","request_id":"$req","error":"bypass is off","error_code":"bypass_disabled"}}`
-	ok := `{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`
 	f := started(initAnswer, `null`)
 	f.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode","mode":"bypassPermissions"}}`, refuse)
-	f.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, ok)
-	p := start(t, nil, f)
-	sid := p.open(t)
+	f.Respond(`{"type":"control_request","request":{"subtype":"set_permission_mode"}}`, controlOK)
+	p, sid := startOpen(t, nil, f)
 	if _, err := p.SetSessionMode(t.Context(), &acp.SetSessionModeRequest{SessionID: sid, ModeID: "plan"}); err != nil {
 		t.Fatal(err)
 	}

@@ -32,8 +32,7 @@ func TestCancelRightAfterPrompt(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := taking()
-			p := start(t, nil, f)
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, f)
 			if slow {
 				p.agent.pause = func(at string) {
 					if at == "register" {
@@ -67,8 +66,7 @@ func TestCancelRightAfterPrompt(t *testing.T) {
 // still being written.
 func TestCancelDuringWrite(t *testing.T) {
 	f := taking()
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	writing, release := make(chan struct{}), make(chan struct{})
 	p.agent.pause = func(at string) {
 		if at == "write" {
@@ -101,8 +99,7 @@ func TestWithdrawQueuedPrompt(t *testing.T) {
 		claudetest.Until(g[3]),
 		result(names("id2")), claudetest.Send(idle),
 		echo("id4"), result(names("id4")), claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	one := p.prompt(t, sid, "one")
 	wait(t, g[0], "one read")
 	ctx, withdraw := context.WithCancel(t.Context())
@@ -137,8 +134,7 @@ func TestCancelDropsSteers(t *testing.T) {
 	f := fake(user("id2"), echo("id2"),
 		claudetest.Expect(`{"type":"user","uuid":"id3","priority":"now"}`), signal(steered),
 		claudetest.Until(release), result(names("id2")), claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	one := p.prompt(t, sid, "one")
 	eventually(t, "one running", func() bool { _, a := p.queue(t, sid); return a == "id2" })
 	if outcome, err := steering.Steer(t.Context(), p.AgentConn, string(sid), steerText("also")); err != nil || outcome != steering.Injected {

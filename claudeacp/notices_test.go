@@ -131,8 +131,7 @@ func TestRefusalAndSignIn(t *testing.T) {
 		claudetest.Send(`{"type":"assistant","message":{"id":"x","model":"<synthetic>","content":[{"type":"text","text":"Not logged in · Please run /login"}]}}`),
 		claudetest.Send(`{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","user_message_uuids":["id3"]}`),
 		claudetest.Send(idle))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	if got := stopReason(p.prompt(t, sid, "a")); got != "refusal" {
 		t.Error(got)
 	}

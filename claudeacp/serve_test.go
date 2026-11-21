@@ -51,7 +51,7 @@ func TestInitialize(t *testing.T) {
 func TestNewSession(t *testing.T) {
 	f := claudetest.New(
 		claudetest.Expect(`{"type":"control_request","request":{"subtype":"initialize","appendSystemPrompt":"Be brief.\n\nBe kind."}}`),
-		claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
+		claudetest.Send(controlOK),
 	)
 	p := start(t, nil, f)
 	dir := t.TempDir()
@@ -118,7 +118,7 @@ func TestNewSession(t *testing.T) {
 func TestNewSessionCaps(t *testing.T) {
 	f := claudetest.New(
 		claudetest.Expect(`{"type":"control_request","request":{"subtype":"initialize","perTaskStopAffordance":true,"forwardSubagentText":true}}`),
-		claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
+		claudetest.Send(controlOK),
 	)
 	p := start(t, &acp.ClientCapabilities{Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}},
 		Meta: map[string]any{"subagent-transcript": true}}, f)
@@ -175,8 +175,7 @@ func TestNewSessionFails(t *testing.T) {
 func TestClose(t *testing.T) {
 	taken := make(chan struct{})
 	f := fake(user("id2"), echo("id2"), signal(taken))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	w := p.prompt(t, sid, "hi")
 	wait(t, taken, "the prompt taken")
 	if _, err := p.CloseSession(context.Background(), &acp.CloseSessionRequest{SessionID: sid}); err != nil {
@@ -204,8 +203,7 @@ func TestClose(t *testing.T) {
 func TestClientGoesMidTurn(t *testing.T) {
 	taken := make(chan struct{})
 	f := fake(user("id2"), echo("id2"), signal(taken))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	p.prompt(t, sid, "hi")
 	wait(t, taken, "the prompt taken")
 	_ = p.Close()
@@ -219,8 +217,7 @@ func TestClientGoesMidTurn(t *testing.T) {
 func TestDeath(t *testing.T) {
 	first := make(chan struct{})
 	f := fake(user("id2"), signal(first), echo("id2"), user("id3"), claudetest.Exit(1, "crash\n"))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	w1 := p.prompt(t, sid, "one")
 	wait(t, first, "the first prompt written")
 	w2 := p.prompt(t, sid, "two")

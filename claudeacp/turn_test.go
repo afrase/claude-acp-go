@@ -59,8 +59,7 @@ func TestQueue(t *testing.T) {
 	f := fake(user("id2"), signal(g[0]), user("id3"), signal(g[1]),
 		echo("id2"), result(names("id2")), claudetest.Until(g[2]),
 		echo("id3"), claudetest.Send(idle), result(names("id3")))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	ws := p.prompts(t, sid, g, "one", "two")
 	if got := stopReason(ws[0]); got != "end_turn" {
 		t.Errorf("one: %s", got)
@@ -82,8 +81,7 @@ func TestResultLanes(t *testing.T) {
 	f := fake(user("id2"), signal(g[0]), echo("id2"), user("id3"), signal(g[1]),
 		claudetest.Send(`{"type":"result","subtype":"success","origin":{"kind":"task-notification"},"usage":{"input_tokens":100}}`),
 		result(names("id2", "id3")))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	ws := p.prompts(t, sid, g, "one", "two")
 	r, err := ws[0]()
 	if err != nil || r.StopReason != acp.StopReasonEndTurn || r.Usage.InputTokens != 3 {
@@ -103,8 +101,7 @@ func TestResultLanes(t *testing.T) {
 
 // An idle while a prompt runs with no result fails it.
 func TestNoResult(t *testing.T) {
-	p := start(t, nil, fake(user("id2"), echo("id2"), claudetest.Send(running), claudetest.Send(idle)))
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, fake(user("id2"), echo("id2"), claudetest.Send(running), claudetest.Send(idle)))
 	_, err := p.prompt(t, sid, "hi")()
 	if e, ok := errors.AsType[*acp.Error](err); !ok || e.Code != acp.ErrorCodeInternalError || string(e.Data) != `{"errorKind":"no_result"}` {
 		t.Errorf("%v", err)
@@ -165,8 +162,7 @@ func TestCancel(t *testing.T) {
 		event(`{"type":"message_start","message":{"id":"msg_2"}}`),
 		delta("0", "text_delta", "text", "own"),
 		claudetest.Send(`{"type":"result","subtype":"success","origin":{"kind":"task-notification"},"usage":{"input_tokens":1}}`))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	ws := p.prompts(t, sid, g, "one", "two", "three")
 	eventually(t, "one running", func() bool { _, a := p.queue(t, sid); return a == "id2" })
 	if err := p.Cancel(t.Context(), &acp.CancelNotification{SessionID: sid}); err != nil {
@@ -215,8 +211,7 @@ func TestCancelThenPrompt(t *testing.T) {
 		claudetest.Send(`{"type":"result","subtype":"success","origin":{"kind":"task-notification"},"usage":{"input_tokens":1}}`), // so the test knows the last was read
 		claudetest.Until(release),
 		echo("id4"), result(names("id4")))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	one := p.prompt(t, sid, "one")
 	wait(t, g[0], "one read")
 	if outcome, err := steering.Steer(t.Context(), p.AgentConn, string(sid), steerText("also")); err != nil || outcome != steering.Injected {
@@ -263,8 +258,7 @@ func TestCancelEnds(t *testing.T) {
 				steps = append(steps, claudetest.Send(idle))
 			}
 			f := fake(steps...)
-			p := start(t, nil, f)
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, f)
 			w := p.prompt(t, sid, "hi")
 			wait(t, taken, "the prompt taken")
 			eventually(t, "the prompt running", func() bool { _, a := p.queue(t, sid); return a == "id2" })

@@ -47,8 +47,7 @@ func TestTitle(t *testing.T) {
 		t.Run(tc.want, func(t *testing.T) {
 			done := make(chan struct{})
 			f := started(`{}`, tc.title, twoTurns("id2", "id3", done)...)
-			p := start(t, nil, f)
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, f)
 			stopReason(p.prompt(t, sid, "Fix the login page"))
 			eventually(t, "the ask", func() bool { return len(responded(f)) == 1 })
 			stopReason(p.prompt(t, sid, "and the logout one"))

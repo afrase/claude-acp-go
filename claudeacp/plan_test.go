@@ -52,8 +52,7 @@ func TestTodoWrite(t *testing.T) {
 		user("id3"), echo("id3"),
 		claudetest.Send(`{"type":"conversation_reset","new_conversation_id":"c2","trigger":"clear"}`),
 		result(names("id3")), claudetest.Send(idle), signal(read))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	stopReason(p.prompt(t, sid, "again"))
 	wait(t, read, "the script")

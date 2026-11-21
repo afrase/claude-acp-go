@@ -33,8 +33,7 @@ func TestSteer(t *testing.T) {
 			taken := make(chan struct{})
 			steps := []claudetest.Step{user("id2"), echo("id2"), signal(taken),
 				claudetest.Expect(`{"type":"user","uuid":"id3","priority":"` + tc.priority + `","message":{"content":[{"type":"text","text":"also"}]}}`)}
-			p := start(t, nil, fake(append(steps, tc.end...)...))
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, fake(append(steps, tc.end...)...))
 			w := p.prompt(t, sid, "hi")
 			wait(t, taken, "the prompt taken")
 			eventually(t, "the prompt running", func() bool { _, a := p.queue(t, sid); return a == "id2" })
@@ -61,8 +60,7 @@ func TestSteer(t *testing.T) {
 func TestSteerIdle(t *testing.T) {
 	f := fake(claudetest.Expect(`{"type":"user","uuid":"id2","message":{"content":[{"type":"text","text":"go"}]}}`),
 		echo("id2"), result(names("id2")))
-	p := start(t, nil, f)
-	sid := p.open(t)
+	p, sid := startOpen(t, nil, f)
 	var resp steering.Response
 	if err := p.Call(t.Context(), steering.Method, steering.Request[acp.ContentBlock]{SessionID: string(sid), Prompt: steerText("wait"),
 		Meta: map[string]any{"steering": map[string]any{"idleBehavior": "promptRequired"}}}, &resp); err != nil ||
@@ -102,8 +100,7 @@ func TestSteerHandOff(t *testing.T) {
 			f := fake(user("id2"), signal(g[0]), echo("id2"), user("id3"), signal(g[1]),
 				claudetest.Expect(`{"type":"user","uuid":"id4","priority":"now"}`), signal(steered),
 				result(names("id2")+","+tc.fields), echo("id3"), result(names("id3")))
-			p := start(t, nil, f)
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, f)
 			ws := p.prompts(t, sid, g, "one", "two")
 			eventually(t, "one running", func() bool { _, a := p.queue(t, sid); return a == "id2" })
 			outcome, err := steering.Steer(t.Context(), p.AgentConn, string(sid), steerText("also"))
@@ -137,8 +134,7 @@ func TestSteerFold(t *testing.T) {
 			steps := []claudetest.Step{user("id2"), signal(g[0]), echo("id2"), user("id3"), signal(g[1]),
 				claudetest.Expect(`{"type":"user","uuid":"id4","priority":"now"}`), signal(steered),
 				result(names("id2", "id3"))}
-			p := start(t, nil, fake(append(steps, tc.end...)...))
-			sid := p.open(t)
+			p, sid := startOpen(t, nil, fake(append(steps, tc.end...)...))
 			ws := p.prompts(t, sid, g, "one", "two")
 			if outcome, err := steering.Steer(t.Context(), p.AgentConn, string(sid), steerText("also")); err != nil || outcome != steering.Injected {
 				t.Fatalf("%s %v", outcome, err)
