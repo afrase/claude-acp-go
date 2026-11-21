@@ -24,7 +24,10 @@ type Config struct {
 	// as CLAUDE_CONFIG_DIR, so it writes where the agent reads.
 	ConfigDir string
 	Spawn     claudeagent.Spawner // nil = claudeagent.Exec
-	Log       *slog.Logger        // nil = no log; never a prompt or a token
+	// Log is the agent's log; nil = none. The agent's own lines never hold
+	// a prompt or a token, but claude's stderr lines go to it too (at
+	// Info, cut at 1 KiB, rate-limited), and those may quote one.
+	Log *slog.Logger
 	// SharedGroup runs each claude in this process's group
 	// (claudeagent.Options.SharedGroup), so a client that stops the agent
 	// by killing its group stops every claude with it. Main sets it.

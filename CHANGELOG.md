@@ -5,6 +5,7 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 ## v0.6.1 (unreleased)
 
 - Security: a JSON `Options.Settings` (a session's `settings` object in `claudeacp`) no longer goes on claude's command line, where any local user could read it, an env block's tokens included, with `ps`. It goes in a 0600 file in a private 0700 temp folder, named by `--settings` and removed once claude exits (or the start fails); claude may read it again while it runs, so it stays until then. A `Spawner` gets that path in `Spec.Args`; `claudetest.Fake.Settings` returns what the file held. A settings path is passed as before.
+- Docs: `claudeacp.Config.Log` says claude's stderr lines go to it too (at Info, cut at 1 KiB, rate-limited), and may quote a prompt or a token, as the README says; it said the log never held one.
 
 ## v0.6.0 (2026-11-20)
 
