@@ -380,3 +380,33 @@ func TestSpecFindsClaude(t *testing.T) {
 		t.Errorf("%+v %v", s, err)
 	}
 }
+
+// On Windows, where files have no execute bits, claude is claude.exe (an
+// extension PATHEXT names) on PATH; elsewhere it must be executable.
+func TestLookPath(t *testing.T) {
+	dir := t.TempDir()
+	for name, mode := range map[string]os.FileMode{"claude.exe": 0o644, "tool": 0o755, "plain": 0o644} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, pathext string
+		windows       bool
+		want          string // "" = not found
+	}{
+		{"claude", "", true, "claude.exe"},
+		{"claude", ".COM;.EXE", true, "claude.exe"},
+		{"claude.exe", "", true, "claude.exe"},
+		{"claude", ".bat", true, ""},
+		{"claude", "", false, ""},
+		{"claude.exe", "", false, ""}, // not executable
+		{"tool", "", false, "tool"},
+		{"plain", "", false, ""},
+	} {
+		got, err := lookPath(tc.name, dir, tc.windows, tc.pathext)
+		if want := filepath.Join(dir, tc.want); (tc.want == "" && err == nil) || (tc.want != "" && got != want) {
+			t.Errorf("%s (windows %v, PATHEXT %q): %q, %v", tc.name, tc.windows, tc.pathext, got, err)
+		}
+	}
+}

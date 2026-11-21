@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -376,8 +377,8 @@ func spec(o Options, mcpConfig string) (Spec, error) {
 	case path == "":
 		path = "claude"
 		fallthrough
-	case !strings.ContainsRune(path, filepath.Separator):
-		if path, err = lookPath(path, getenv(env, "PATH")); err != nil {
+	case !strings.ContainsAny(path, "/"+string(filepath.Separator)): // Windows takes either
+		if path, err = lookPath(path, getenv(env, "PATH"), runtime.GOOS == "windows", getenv(env, "PATHEXT")); err != nil {
 			return Spec{}, err
 		}
 	case !filepath.IsAbs(path):
@@ -392,14 +393,31 @@ func spec(o Options, mcpConfig string) (Spec, error) {
 
 // lookPath finds the program name on path, a PATH list: exec.LookPath
 // reads this process's PATH, and claude's environment may have another.
-func lookPath(name, path string) (string, error) {
+// On Windows (windows), where files have no execute bits, a program is
+// a file with an extension in pathext (PATHEXT), tried in its order when
+// name has none of them.
+func lookPath(name, path string, windows bool, pathext string) (string, error) {
+	names := []string{name}
+	if windows {
+		exts := strings.Split(strings.ToLower(cmp.Or(pathext, ".com;.exe;.bat;.cmd")), ";")
+		if !slices.Contains(exts, strings.ToLower(filepath.Ext(name))) {
+			names = nil
+			for _, ext := range exts {
+				if ext != "" {
+					names = append(names, name+ext)
+				}
+			}
+		}
+	}
 	for _, dir := range filepath.SplitList(path) {
 		if dir == "" || !filepath.IsAbs(dir) {
 			continue // a relative PATH entry would resolve against our folder, not claude's
 		}
-		p := filepath.Join(dir, name)
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
-			return p, nil
+		for _, n := range names {
+			p := filepath.Join(dir, n)
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && (windows || fi.Mode()&0o111 != 0) {
+				return p, nil
+			}
 		}
 	}
 	return "", fmt.Errorf("claudeagent: %s isn't on PATH", name)
