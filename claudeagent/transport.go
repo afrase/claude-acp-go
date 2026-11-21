@@ -49,8 +49,9 @@ type transport struct {
 	wslot       chan struct{}
 	inputClosed atomic.Bool
 
-	removeConfig func() // removes the MCP config file, once; nil without one
-	closeOnce    sync.Once
+	removeConfig   func() // removes the MCP config file, once; nil without one
+	removeSettings func() // removes the settings file once claude exits; nil without one
+	closeOnce      sync.Once
 }
 
 // startTransport starts claude for o.
@@ -59,9 +60,15 @@ func startTransport(ctx context.Context, o Options) (*transport, error) {
 	if err != nil {
 		return nil, err
 	}
+	var removeSettings func()
+	if o.Settings, removeSettings, err = writeSettings(o.Settings); err != nil {
+		remove()
+		return nil, err
+	}
 	s, err := spec(o, config)
 	if err != nil {
 		remove()
+		removeSettings()
 		return nil, err
 	}
 	spawn := o.Spawner
@@ -71,10 +78,12 @@ func startTransport(ctx context.Context, o Options) (*transport, error) {
 	p, err := spawn(ctx, s)
 	if err != nil {
 		remove()
+		removeSettings()
 		return nil, err
 	}
 	t := makeTransport(p, o)
 	t.removeConfig = sync.OnceFunc(remove)
+	t.removeSettings = removeSettings
 	t.start(o.MaxLine)
 	return t, nil
 }
@@ -210,6 +219,9 @@ func (t *transport) readStderr() {
 // after a second.
 func (t *transport) waitExit() {
 	t.exitErr = t.proc.Wait()
+	if t.removeSettings != nil {
+		t.removeSettings()
+	}
 	_ = t.closeInput() // nothing reads it now
 	close(t.exited)
 	t.giveUp(t.errOut, 200*time.Millisecond, t.stderrDone, "stderr")

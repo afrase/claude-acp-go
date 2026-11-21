@@ -81,10 +81,13 @@ func TestNewSession(t *testing.T) {
 		t.Errorf("%+v", sp)
 	}
 	for _, want := range []string{"--session-id=id1", "--setting-sources=user,project,local", "--include-partial-messages",
-		"--replay-user-messages", "--model=opus", "--add-dir=/extra", "--disallowedTools=AskUserQuestion", `{"ultracode":true}`} {
+		"--replay-user-messages", "--model=opus", "--add-dir=/extra", "--disallowedTools=AskUserQuestion", "--settings"} {
 		if !slices.Contains(sp.Args, want) {
 			t.Errorf("no %s in %q", want, sp.Args)
 		}
+	}
+	if got := string(f.Settings()); got != `{"ultracode":true}` {
+		t.Errorf("settings %s", got)
 	}
 	var mcp struct{ MCPServers map[string]map[string]any }
 	if !slices.Contains(sp.Args, "--mcp-config") || json.Unmarshal(f.MCPConfig(), &mcp) != nil {

@@ -103,8 +103,9 @@ type Options struct {
 	ResumeSessionAt string         // with Resume: the message to resume after
 	SettingSources  []string       // nil = every source; empty = none
 	// Settings is --settings: a JSON object, or a settings file's path.
-	// An object goes on claude's command line, which other local users
-	// can read; pass secrets (an env block's tokens) in a file instead.
+	// An object, which may hold secrets (an env block's tokens), is
+	// passed in a file only this user can read, removed once claude
+	// exits, never on claude's command line.
 	Settings string
 	// MCPServers are passed in a file only this user can read, removed
 	// once claude has answered initialize, never on claude's command line.
@@ -333,6 +334,28 @@ func writeMCPConfig(servers map[string]MCPServer) (path string, remove func(), e
 	if err := os.WriteFile(path, config, 0o600); err != nil {
 		remove()
 		return "", nil, fmt.Errorf("claudeagent: writing the MCP config: %w", err)
+	}
+	return path, remove, nil
+}
+
+// writeSettings writes a JSON object setting, for claude's --settings,
+// to a file only this user can read, in a new folder of its own, and
+// returns its path and a func that removes both; a path setting, or none,
+// is returned as it is. A file, not an argument, as writeMCPConfig says;
+// it stays until claude exits, which may read it again.
+func writeSettings(settings string) (arg string, remove func(), err error) {
+	if !strings.HasPrefix(strings.TrimSpace(settings), "{") {
+		return settings, func() {}, nil
+	}
+	dir, err := os.MkdirTemp("", "claudeagent-settings-") // 0700
+	if err != nil {
+		return "", nil, fmt.Errorf("claudeagent: a folder for the settings: %w", err)
+	}
+	remove = func() { _ = os.RemoveAll(dir) }
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
+		remove()
+		return "", nil, fmt.Errorf("claudeagent: writing the settings: %w", err)
 	}
 	return path, remove, nil
 }

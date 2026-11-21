@@ -2,6 +2,10 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.6.1 (unreleased)
+
+- Security: a JSON `Options.Settings` (a session's `settings` object in `claudeacp`) no longer goes on claude's command line, where any local user could read it, an env block's tokens included, with `ps`. It goes in a 0600 file in a private 0700 temp folder, named by `--settings` and removed once claude exits (or the start fails); claude may read it again while it runs, so it stays until then. A `Spawner` gets that path in `Spec.Args`; `claudetest.Fake.Settings` returns what the file held. A settings path is passed as before.
+
 ## v0.6.0 (2026-11-20)
 
 - `claudeacp`: a background subagent's totals reach the client. Its Agent call ends at once (`toolResponse.status` `async_launched`), and claude tells what the subagent used only in its task notification (`usage`), which the agent dropped. They now go as a `tool_call_update` of that Agent call with only `_meta.claudeCode.toolResponse` `{totalTokens, totalToolUseCount, totalDurationMs}`, the names a foreground subagent's own response has them under, so a client reads them where it already does. `session/load` replays them from the `<usage>` of claude's `<task-notification>`, a subagent's subagent's too. See the README's "Background subagents".

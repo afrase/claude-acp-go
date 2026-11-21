@@ -35,6 +35,7 @@ type Fake struct {
 	spawned   bool
 	spec      claudeagent.Spec
 	mcpConfig json.RawMessage
+	settings  json.RawMessage
 	signals   []os.Signal
 	err       error
 	exitErr   error
@@ -118,6 +119,11 @@ func (f *Fake) Spawn(ctx context.Context, s claudeagent.Spec) (*claudeagent.Proc
 			f.mcpConfig = b
 		}
 	}
+	if i := slices.Index(s.Args, "--settings"); i >= 0 && i+1 < len(s.Args) {
+		if b, err := os.ReadFile(s.Args[i+1]); err == nil {
+			f.settings = b
+		}
+	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	errR, errW := io.Pipe()
@@ -170,6 +176,14 @@ func (f *Fake) MCPConfig() json.RawMessage {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.mcpConfig
+}
+
+// Settings is the settings the fake was started with, read from the file
+// --settings names as claude reads it; nil without one.
+func (f *Fake) Settings() json.RawMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.settings
 }
 
 // Signals are the signals the fake was sent, in order.

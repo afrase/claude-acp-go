@@ -169,6 +169,94 @@ func TestMCPConfigNotInArgs(t *testing.T) {
 	}
 }
 
+// A settings object, which may hold tokens, is never on claude's command
+// line either: it is in a file only this user can read, in a folder of
+// its own, removed once claude exits. A path is passed as it is.
+func TestSettingsNotInArgs(t *testing.T) {
+	const settings = `{"env":{"API_TOKEN":"tok_secret3"}}`
+	var got Spec
+	exit := make(chan struct{})
+	tr, err := startTransport(context.Background(), Options{CLIPath: "/c", Env: []string{}, Settings: settings,
+		Spawner: func(_ context.Context, s Spec) (*Proc, error) {
+			got = s
+			return &Proc{
+				Stdin: nopWriteCloser{}, Stdout: io.NopCloser(strings.NewReader("")), Stderr: io.NopCloser(strings.NewReader("")),
+				Process: exitingProcess{exit},
+			}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := strings.Join(got.Args, " "); strings.Contains(line, "tok_secret3") || strings.Contains(line, "API_TOKEN") {
+		t.Errorf("the settings on the command line: %s", line)
+	}
+	i := slices.Index(got.Args, "--settings")
+	if i < 0 || i+1 == len(got.Args) {
+		t.Fatalf("no --settings: %q", got.Args)
+	}
+	path := got.Args[i+1]
+	if b, err := os.ReadFile(path); err != nil || string(b) != settings {
+		t.Errorf("the settings file: %s %v", b, err)
+	}
+	if runtime.GOOS != "windows" {
+		for p, want := range map[string]os.FileMode{path: 0o600, filepath.Dir(path): 0o700} {
+			if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != want {
+				t.Errorf("%s: %v %v, want %v", p, fi.Mode().Perm(), err, want)
+			}
+		}
+	}
+	tr.configRead() // claude may read its settings again: they stay
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the settings went before claude exited: %v", err)
+	}
+	close(exit)
+	<-tr.exited
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the settings' folder is still there: %v", err)
+	}
+	tr.close()
+
+	// A start that fails leaves no settings behind either.
+	_, err = startTransport(context.Background(), Options{CLIPath: "/c", Env: []string{}, Settings: settings,
+		Spawner: func(_ context.Context, s Spec) (*Proc, error) {
+			got = s
+			return nil, errors.ErrUnsupported
+		}})
+	if err == nil {
+		t.Fatal("started")
+	}
+	if _, err := os.Stat(got.Args[slices.Index(got.Args, "--settings")+1]); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a failed start left its settings: %v", err)
+	}
+
+	// A path is claude's to read.
+	_, _ = startTransport(context.Background(), Options{CLIPath: "/c", Env: []string{}, Settings: "/etc/claude.json",
+		Spawner: func(_ context.Context, s Spec) (*Proc, error) {
+			got = s
+			return nil, errors.ErrUnsupported
+		}})
+	if i := slices.Index(got.Args, "--settings"); i < 0 || got.Args[i+1] != "/etc/claude.json" {
+		t.Errorf("a settings path: %q", got.Args)
+	}
+}
+
+// exitingProcess is a claude that exits with 0 once exit is closed.
+type exitingProcess struct{ exit chan struct{} }
+
+func (p exitingProcess) Wait() error {
+	<-p.exit
+	return nil
+}
+
+func (p exitingProcess) Signal(os.Signal) error {
+	select {
+	case <-p.exit:
+		return os.ErrProcessDone
+	default:
+		return nil
+	}
+}
+
 // exitedProcess is a claude that has exited with 0.
 type exitedProcess struct{}
 
