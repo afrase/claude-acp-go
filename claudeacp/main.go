@@ -34,11 +34,12 @@ func Main(cfg Config) error {
 	ctx, stop := ossignal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	signalled := make(chan struct{})
-	defer context.AfterFunc(ctx, func() { // unregistered before stop runs, so a return logs nothing
+	unregister := context.AfterFunc(ctx, func() {
 		stop() // the next signal has its default effect
 		log.Info("closing the sessions on a signal", "signal", context.Cause(ctx))
 		close(signalled)
-	})()
+	})
+	defer unregister() // before stop: a return logs nothing
 	err := Serve(ctx, os.Stdin, os.Stdout, cfg)
 	if ctx.Err() != nil {
 		<-signalled
