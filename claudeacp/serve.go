@@ -30,7 +30,7 @@ type Config struct {
 	Log *slog.Logger
 	// SharedGroup runs each claude in this process's group
 	// (claudeagent.Options.SharedGroup), so a client that stops the agent
-	// by killing its group stops every claude with it. Main sets it.
+	// by killing its group stops every claude with it. Main always sets it.
 	SharedGroup bool
 }
 

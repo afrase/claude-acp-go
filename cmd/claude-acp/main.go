@@ -33,7 +33,7 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	if claudeacp.Main() != nil {
+	if claudeacp.Main(claudeacp.Config{}) != nil {
 		os.Exit(1) // Main logged why
 	}
 }

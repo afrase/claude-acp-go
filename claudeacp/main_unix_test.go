@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 	managedSettings = "" // the machine's own aren't the tests'
 	switch os.Getenv("CLAUDEACP_TEST_ROLE") {
 	case "agent":
-		if Main() != nil {
+		if Main(Config{}) != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)
