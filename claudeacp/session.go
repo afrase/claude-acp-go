@@ -91,7 +91,7 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 	if err != nil {
 		return nil, err
 	}
-	a.out.after(s.id, s.cmds.sendAll)
+	acp.AfterResponse(ctx, s.cmds.sendAll) // a client takes a session's updates once it knows its id
 	modes, opts := s.cfg.state()
 	return &acp.NewSessionResponse{SessionID: acp.SessionID(s.id), Modes: modes, ConfigOptions: opts}, nil
 }

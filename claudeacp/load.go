@@ -191,7 +191,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		}
 		return nil, err
 	}
-	a.out.after(s.id, s.cmds.sendAll)
+	acp.AfterResponse(ctx, s.cmds.sendAll)
 	modes, opts := s.cfg.state()
 	return &acp.ForkSessionResponse{SessionID: acp.SessionID(s.id), Modes: modes, ConfigOptions: opts}, nil
 }
