@@ -84,9 +84,7 @@ func TestCancelDuringWrite(t *testing.T) {
 	eventually(t, "the prompt cancelled", func() bool { ids, _ := p.queue(t, sid); return len(ids) == 0 })
 	time.Sleep(20 * time.Millisecond) // a drop that doesn't wait would have gone by now
 	close(release)
-	if got := stopReason(w); got != "cancelled" {
-		t.Fatal(got)
-	}
+	stopsWith(t, w, "cancelled")
 	eventually(t, "the prompt, its drop and the interrupt", func() bool { return len(responded(f)) == 3 })
 	for i, want := range []string{`"uuid":"id2"`, `"message_uuid":"id2"`, `"subtype":"interrupt"`} {
 		if got := responded(f)[i]; !strings.Contains(got, want) {

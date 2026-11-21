@@ -69,9 +69,7 @@ func TestToolLifecycle(t *testing.T) {
 		claudetest.Send(`{"type":"control_response","response":{"subtype":"success","request_id":"$req","response":{}}}`),
 	}, steps...)...), `null`)
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	want := []string{
 		`tool_call {"toolCallId":"toolu_1","title":"Agent","name":"Agent","kind":"think","status":"pending","rawInput":{},"_meta":{"claudeCode":{"toolName":"Agent"}}}`,
 		`tool_call_update {"toolCallId":"toolu_1","title":"Looks, then","rawInput":{"description":"Looks, then"},"_meta":{"claudeCode":{"toolName":"Agent"}}}`,
@@ -104,9 +102,7 @@ func TestToolResults(t *testing.T) {
 		sendf(`{"type":"system","subtype":"permission_denied","tool_use_id":"toolu_w","tool_name":"WebFetch","decision_reason":"a rule","message":"denied by a rule"}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, fake(steps...))
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	want := []string{
 		`tool_call {"toolCallId":"toolu_e","title":"Edit /w/a.go","name":"Edit","kind":"edit","status":"pending","content":[{"type":"diff","path":"/w/a.go","oldText":"x","newText":"y"}],"locations":[{"path":"/w/a.go"}],"rawInput":{"file_path":"/w/a.go","old_string":"x","new_string":"y"},"_meta":{"claudeCode":{"toolName":"Edit"}}}`,
 		`tool_call_update {"toolCallId":"toolu_e","content":[{"type":"diff","path":"/w/a.go","oldText":"a\nx","newText":"a\ny"}],"_meta":{"claudeCode":{"toolName":"Edit","toolResponse":{"filePath":"/w/a.go","structuredPatch":[{"lines":[" a","-x","+y"],"oldStart":1}]}}}}`,
@@ -202,9 +198,7 @@ func TestHookBeforeInput(t *testing.T) {
 	wait(t, at, "the call's start")
 	eventually(t, "the call", func() bool { return len(p.of("tool_call")) == 1 })
 	close(release)
-	if got := stopReason(w); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, w, "end_turn")
 	ups := p.toolUpdates()
 	whole := slices.IndexFunc(ups, func(u string) bool { return strings.Contains(u, `"rawInput":{"command":"ls"}`) })
 	hook := slices.IndexFunc(ups, func(u string) bool { return strings.Contains(u, `"toolResponse"`) })
@@ -225,9 +219,7 @@ func TestPermissionBeforeStream(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
 	p.permit = pick(optAllowOnce)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	for _, u := range p.toolUpdates() {
 		if strings.Contains(u, `"rawInput":{}`) || strings.Contains(u, `"title":"Bash"`) {
 			t.Errorf("the stream's start undid the request's call: %s", u)
@@ -325,9 +317,7 @@ func TestStructuredResult(t *testing.T) {
 			`"tool_use_result":{"stdout":"abc","stderr":"","interrupted":false,"persistedOutputPath":"/tmp/x.txt","persistedOutputSize":40960}}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	got := p.toolUpdates()
 	want := "```console\\nabc\\n[Output truncated (40960 bytes total): full output saved to /tmp/x.txt]\\n```"
 	if len(got) != 2 || !strings.Contains(got[1], want) {
@@ -357,9 +347,7 @@ func TestHookDiffs(t *testing.T) {
 	}
 	steps = append(steps, result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, fake(steps...))
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	var got []string
 	for _, u := range p.toolUpdates() {
 		if before, _, ok := strings.Cut(u, `,"_meta":{"claudeCode":{"toolName":"Edit","toolResponse"`); ok {
@@ -392,9 +380,7 @@ func TestProgressOfParent(t *testing.T) {
 		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"Done."}]}}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	got := p.toolUpdates()
 	want := []string{
 		`tool_call_update {"toolCallId":"toolu_a","status":"in_progress","_meta":{"claudeCode":{"toolName":"Agent","toolResponse":{"elapsedTimeSeconds":3,"subagentType":"Explore"}}}}`,
@@ -415,9 +401,7 @@ func TestNonExecution(t *testing.T) {
 			`"tool_result_meta":[{"id":"toolu_b","non_execution_kind":"user-rejected","user_feedback":"use make instead"},{"id":"other"},7]}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	got := p.toolUpdates()
 	if want := `"_meta":{"claudeCode":{"nonExecutionKind":"user-rejected","toolName":"Bash","userFeedback":"use make instead"}}`; len(got) != 2 || !strings.Contains(got[1], want) {
 		t.Errorf("%s", strings.Join(got, "\n"))
@@ -433,9 +417,7 @@ func TestDenied(t *testing.T) {
 		sendf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_r","is_error":true,"content":"Permission to use Bash with command rm -rf x has been denied."}]}}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	want := []string{
 		`tool_call_update {"toolCallId":"toolu_r","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Permission denied: Bash(rm:*) is denied by a rule in settings"}}],"_meta":{"claudeCode":{"toolName":"Bash","toolResponse":{"decisionReason":"Bash(rm:*) is denied by a rule in settings","decisionReasonType":"rule","message":"Permission to use Bash with command rm -rf x has been denied."}}}}`,
 		`tool_call_update {"toolCallId":"toolu_r","rawOutput":"Permission to use Bash with command rm -rf x has been denied.","_meta":{"claudeCode":{"toolName":"Bash"}}}`,

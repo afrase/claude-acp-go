@@ -53,9 +53,7 @@ func TestStreamImage(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "draw")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "draw"), "end_turn")
 	want := []string{"msg_1:image/png:iVBORw0KGgo=:", "msg_1:::https://example.com/a.png"}
 	if got := p.images("agent_message_chunk"); !slices.Equal(got, want) {
 		t.Errorf("got %q\nwant %q", got, want)

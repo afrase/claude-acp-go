@@ -84,9 +84,7 @@ func TestResultText(t *testing.T) {
 	f := fake(user("id2"), claudetest.Send(`{"type":"result","subtype":"success","uuid":"r1","result":"Context: 5%","total_cost_usd":0}`), claudetest.Send(idle))
 	p := start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "/context")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "/context"), "end_turn")
 	if got := p.texts(); !slices.Equal(got, []string{"text:r1:Context: 5%"}) {
 		t.Errorf("%q", got)
 	}

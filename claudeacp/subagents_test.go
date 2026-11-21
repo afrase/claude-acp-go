@@ -78,9 +78,7 @@ func TestSubagentSession(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, withSubagents, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	got := shape(p.notes(), sid)
 	want := []string{
 		"s1 call toolu_p Agent pending",
@@ -110,9 +108,7 @@ func TestSubagentWithoutSessions(t *testing.T) {
 		subagentCall("toolu_p", "toolu_1"), taskEnd("completed"), agentDone, result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	got := shape(p.notes(), sid)
 	want := []string{"s1 call toolu_p Agent pending", "s1 call toolu_1 Bash pending parent=toolu_p",
 		"s1 update toolu_1 failed parent=toolu_p", "s1 update toolu_p completed", "s1 usage human"}
@@ -152,9 +148,7 @@ func TestSubagentEnds(t *testing.T) {
 			}
 			steps = append(steps, agentDone, result(names("id2")), claudetest.Send(idle))
 			p := start(t, withSubagents, fake(steps...))
-			if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-				t.Fatal(got)
-			}
+			stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 			if got := p.states(); !slices.Equal(got, tc.want) {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
@@ -180,9 +174,7 @@ func TestSubagentHeldBounds(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, withSubagents, fake(steps...))
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	on := map[string]int{}
 	for _, n := range p.notes() {
 		if tc := n.Update.ToolCall; tc != nil && tc.Name == "Bash" {
@@ -219,9 +211,7 @@ func TestSubagentAsks(t *testing.T) {
 			asked = req.SessionID
 			return pick(optAllowOnce)(ctx, req)
 		}
-		if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-			t.Fatal(got)
-		}
+		stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 		if got := p.states(); asked != "a1" || !slices.Equal(got, []string{stateAsking, stateRunning}) {
 			t.Errorf("asked on %q; states %v", asked, got)
 		}
@@ -245,9 +235,7 @@ func TestSubagentAsks(t *testing.T) {
 		if err := p.Cancel(context.Background(), &acp.CancelNotification{SessionID: "a1"}); err != nil {
 			t.Fatal(err)
 		}
-		if got := stopReason(w); got != "end_turn" {
-			t.Fatal(got)
-		}
+		stopsWith(t, w, "end_turn")
 		if got := p.states(); !slices.Equal(got, []string{stateAsking, `{"state":"idle","stopReason":"cancelled"}`}) {
 			t.Errorf("states %v", got)
 		}
@@ -301,9 +289,7 @@ func testTurnCancelSpares(t *testing.T, ask []claudetest.Step) {
 	}
 	eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
 	close(release)
-	if got := stopReason(w); got != "cancelled" {
-		t.Fatal(got)
-	}
+	stopsWith(t, w, "cancelled")
 	if <-withdrawn {
 		t.Error("the turn's cancel withdrew a background subagent's request")
 	}
@@ -341,9 +327,7 @@ func TestSubagentStopNested(t *testing.T) {
 	}
 	eventually(t, "stop_task", func() bool { return len(asked(f)) > 0 })
 	close(release)
-	if got := stopReason(w); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, w, "end_turn")
 	var states []string
 	for _, n := range p.notes() {
 		if su := n.Update.SubagentUpdate; su != nil && su.SessionID == "b2" && !su.Title.Present {
@@ -403,9 +387,7 @@ func TestSubagentAgain(t *testing.T) {
 			steps = append(append(steps, tc.again...), result(names("id2")), claudetest.Send(idle))
 			p := start(t, withSubagents, fake(steps...))
 			sid := p.open(t)
-			if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-				t.Fatal(got)
-			}
+			stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 			got := shape(p.notes(), sid)
 			end := slices.Index(got, `s1 subagent {"sessionId":"a1","state":{"state":"idle","stopReason":"end_turn"}}`)
 			if end < 0 || !slices.Equal(got[end+1:len(got)-1], tc.want) {
@@ -458,9 +440,7 @@ func TestSubagentNewerRun(t *testing.T) {
 			steps = append(append(steps, tc.again...), result(names("id2")), claudetest.Send(idle))
 			p := start(t, withSubagents, fake(steps...))
 			sid := p.open(t)
-			if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-				t.Fatal(got)
-			}
+			stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 			if got := p.states(); !slices.Equal(got, tc.states) {
 				t.Errorf("states %v, want %v", got, tc.states)
 			}
@@ -490,9 +470,7 @@ func TestSubagentAgainWithoutSessions(t *testing.T) {
 			result(names("id2")), claudetest.Send(idle))
 		p := start(t, nil, fake(steps...))
 		sid := p.open(t)
-		if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-			t.Fatal(got)
-		}
+		stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 		got := shape(p.notes(), sid)
 		want := []string{"s1 call toolu_2 Bash pending parent=toolu_m", "s1 update toolu_2 failed parent=toolu_m", "s1 usage human"}
 		if i := slices.Index(got, want[0]); i < 0 || !slices.Equal(got[i:], want) {
@@ -523,9 +501,7 @@ func TestSubagentAgainWithoutSessions(t *testing.T) {
 		// to reach the client.
 		eventually(t, "the interrupt", func() bool { return len(asked(f)) > 0 })
 		close(release)
-		if got := stopReason(w); got != "cancelled" {
-			t.Fatal(got)
-		}
+		stopsWith(t, w, "cancelled")
 		if <-withdrawn {
 			t.Error("the turn's cancel withdrew a resumed background subagent's request")
 		}
@@ -662,9 +638,7 @@ func TestSubagentResumedAfterRestart(t *testing.T) {
 	if _, err := p.ResumeSession(context.Background(), &acp.ResumeSessionRequest{SessionID: acp.SessionID(sid), Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
-	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, acp.SessionID(sid), "go"), "end_turn")
 	got := shape(p.notes(), acp.SessionID(sid))
 	want := []string{
 		"s1 call toolu_m SendMessage pending",
@@ -694,9 +668,7 @@ func TestSubagentStreamForgotten(t *testing.T) {
 		subagentCall("toolu_p", "toolu_t"),
 		taskEnd("completed"), agentDone, result(names("id2")), claudetest.Send(idle)))
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	s, _ := p.agent.session(sid)
 	// The prompt's answer came after the subagent's end was handled.
 	_, msgs := s.st.msgs["toolu_p"]

@@ -257,6 +257,14 @@ func stopReason(wait func() (*acp.PromptResponse, error)) string {
 	return string(r.StopReason)
 }
 
+// stopsWith waits out a turn and fails the test unless it stopped for want.
+func stopsWith(t *testing.T, wait func() (*acp.PromptResponse, error), want string) {
+	t.Helper()
+	if got := stopReason(wait); got != want {
+		t.Fatalf("stop reason %s, want %s", got, want)
+	}
+}
+
 // eventually waits for ok, checking each millisecond, for guard at most.
 func eventually(t *testing.T, what string, ok func() bool) {
 	t.Helper()

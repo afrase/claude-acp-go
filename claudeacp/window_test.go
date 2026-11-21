@@ -60,9 +60,7 @@ func TestWindow(t *testing.T) {
 	p := start(t, nil, f1, f2)
 	sid := p.open(t)
 	eventually(t, "the asked window", func() bool { n, _ := sessionWindow(p, sid); return n == 1_000_000 })
-	if got := stopReason(p.prompt(t, sid, "hi")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "hi"), "end_turn")
 	var sizes []uint64
 	for _, u := range p.of("usage_update") {
 		sizes = append(sizes, u.UsageUpdate.Size)
@@ -118,9 +116,7 @@ func TestWindowLateAnswer(t *testing.T) {
 	windowScripted.Store(f, true)
 	p = start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "hi")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "hi"), "end_turn")
 	var got []string
 	for _, u := range p.of("usage_update") {
 		got = append(got, fmt.Sprintf("%d/%d", u.UsageUpdate.Used, u.UsageUpdate.Size))

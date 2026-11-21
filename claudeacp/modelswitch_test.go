@@ -43,9 +43,7 @@ func TestModelSwitchFollowed(t *testing.T) {
 	windowScripted.Store(f, true)
 	p := start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "hi")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "hi"), "end_turn")
 	var opts []string
 	for _, u := range p.of("config_option_update") {
 		opts = append(opts, summary(u.ConfigOptionUpdate.ConfigOptions[1:2]))
@@ -77,9 +75,7 @@ func TestModelSwitchResultOfOldModel(t *testing.T) {
 	p := start(t, nil, windowAnswer(started(windowInit, `null`, steps...), "600000"))
 	sid := p.open(t)
 	for _, prompt := range []string{"hi", "/model big"} {
-		if got := stopReason(p.prompt(t, sid, prompt)); got != "end_turn" {
-			t.Fatal(got)
-		}
+		stopsWith(t, p.prompt(t, sid, prompt), "end_turn")
 	}
 	eventually(t, "the new model's window", func() bool { n, sure := sessionWindow(p, sid); return n == 600_000 && !sure })
 	var opts []string

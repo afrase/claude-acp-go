@@ -116,9 +116,7 @@ func TestConfigFollowsClaude(t *testing.T) {
 		claudetest.Send(`{"type":"system","subtype":"status","status":null,"permissionMode":"default"}`),
 		result(`"fast_mode_state":"off","fast_mode_disabled_reason":"rate limited"`), claudetest.Send(idle), signal(read))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	wait(t, read, "the script")
 	var modes []string
 	for _, u := range p.of("current_mode_update") {

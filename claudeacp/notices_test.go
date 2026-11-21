@@ -33,9 +33,7 @@ func TestNotices(t *testing.T) {
 		sendf(`{"type":"system","subtype":"model_refusal_fallback","original_model":"a","fallback_model":"b","content":"Retrying with b."}`),
 		result(names("id2")), claudetest.Send(idle)}
 	p := start(t, nil, fake(steps...))
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	want := []string{
 		`Synced.||{"claudeCode":{"kind":"informational","level":"info"}}`,
 		`**Notice:** Opus 5.5's safeguards stopped the response above||{"claudeCode":{"kind":"informational","level":"notice"}}`,
@@ -46,9 +44,7 @@ func TestNotices(t *testing.T) {
 	}
 
 	p = start(t, &acp.ClientCapabilities{Session: &acp.ClientSessionCapabilities{Notices: &acp.NoticeCapabilities{}}}, fake(steps...))
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	var got []string
 	for _, u := range p.of("notice") {
 		got = append(got, string(u.Notice.Severity)+" "+u.Notice.Title)
@@ -71,9 +67,7 @@ func TestCompaction(t *testing.T) {
 		sendf(`{"type":"system","subtype":"memory_recall","uuid":"m1","memories":[{"path":"a"},{"path":"b"}]}`),
 		result(""), claudetest.Send(idle)}
 	p := start(t, nil, fake(steps...))
-	if got := stopReason(p.prompt(t, p.open(t), "/compact")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "/compact"), "end_turn")
 	want := []string{
 		`tool_call {"toolCallId":"c1","title":"Compact conversation","name":"compact","kind":"think","status":"in_progress","_meta":{"claudeCode":{"toolName":"compact"}}}`,
 		`tool_call_update {"toolCallId":"c1","status":"completed","rawOutput":{"trigger":"manual","preTokens":900,"postTokens":80,"durationMs":1200},"_meta":{"claudeCode":{"toolName":"compact"}}}`,
@@ -101,9 +95,7 @@ func TestCompactionOutcomeFirst(t *testing.T) {
 		success,
 		result(""), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "/compact")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "/compact"), "end_turn")
 	want := []string{
 		`tool_call {"toolCallId":"c1","title":"Compact conversation","name":"compact","kind":"think","status":"in_progress","_meta":{"claudeCode":{"toolName":"compact"}}}`,
 		`tool_call_update {"toolCallId":"c1","status":"completed","_meta":{"claudeCode":{"toolName":"compact"}}}`,
@@ -122,9 +114,7 @@ func TestLocalCommand(t *testing.T) {
 		claudetest.Send(`{"type":"result","subtype":"success","uuid":"r1","result":"## Context Usage","total_cost_usd":0}`),
 		claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "/context")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "/context"), "end_turn")
 	if got := p.texts(); !slices.Equal(got, []string{"text:o1:## Context Usage", "text:r1:## Context Usage"}) {
 		t.Errorf("%q", got)
 	}
@@ -166,9 +156,7 @@ func TestCompactionFacts(t *testing.T) {
 			`tool_call_update {"toolCallId":"b1","status":"completed","_meta":{"claudeCode":{"toolName":"compact"}}}`},
 	} {
 		p := start(t, nil, fake(user("id2"), sendf(tc.boundary), result(""), claudetest.Send(idle)))
-		if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-			t.Fatal(got)
-		}
+		stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 		if got := p.toolUpdates(); len(got) != 2 || got[1] != tc.want {
 			t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), tc.want)
 		}
@@ -186,9 +174,7 @@ func TestCompactionFailedOnce(t *testing.T) {
 		claudetest.Send(`{"type":"result","subtype":"success","uuid":"r1","result":"Not enough messages to compact.","total_cost_usd":0}`),
 		claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "/compact")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "/compact"), "end_turn")
 	if got := p.texts(); !slices.Equal(got, []string{"text:o2:Other output."}) {
 		t.Errorf("%q", got)
 	}
@@ -213,9 +199,7 @@ func TestCompactionUpdates(t *testing.T) {
 		sendf(`{"type":"system","subtype":"status","status":"compacting","uuid":"c3"}`),
 		result(""), claudetest.Send(idle))
 	p := start(t, &acp.ClientCapabilities{Session: &acp.ClientSessionCapabilities{Compaction: &acp.CompactionCapabilities{}}}, f)
-	if got := stopReason(p.prompt(t, p.open(t), "/compact")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "/compact"), "end_turn")
 	var got []string
 	for _, u := range p.of("compaction_update") {
 		b, _ := json.Marshal(u.CompactionUpdate)
@@ -264,9 +248,7 @@ func TestNoticeShape(t *testing.T) {
 		sendf(`{"type":"system","subtype":"model_refusal_fallback","original_model":"a","fallback_model":"b","direction":"retry","scope":"local","api_refusal_category":"cyber","api_refusal_explanation":"Not that.","content":"Retrying."}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, &acp.ClientCapabilities{Session: &acp.ClientSessionCapabilities{Notices: &acp.NoticeCapabilities{}}}, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	var got []string
 	for _, u := range p.of("notice") {
 		got = append(got, string(u.Notice.Severity)+" "+u.Notice.Title+" | "+u.Notice.Description)
@@ -340,9 +322,7 @@ func TestMemoryRecall(t *testing.T) {
 		sendf(`{"type":"system","subtype":"memory_recall","uuid":"m2","mode":"synthesize","memories":[{"path":"<synthesis:/x>","scope":"personal","content":"User prefers Go backends."}]}`),
 		result(""), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	want := []string{
 		`tool_call {"toolCallId":"m1","title":"Recalled 2 memories","name":"memory_recall","kind":"read","status":"completed","locations":[{"path":"/memory/a.md"},{"path":"/memory/b.md"}],` +
 			`"rawOutput":[{"path":"/memory/a.md","scope":"personal"},{"path":"/memory/b.md","scope":"team"}],"_meta":{"claudeCode":{"toolName":"memory_recall","toolResponse":{"mode":"select"}}}}`,
@@ -378,9 +358,7 @@ func TestResultRepeatsNotice(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := start(t, tc.caps, fake(blocked...))
-			if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-				t.Fatal(got)
-			}
+			stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 			var chunks []string
 			for _, u := range p.of("agent_message_chunk") {
 				chunks = append(chunks, u.AgentMessageChunk.Content.Text.Text)
@@ -394,9 +372,7 @@ func TestResultRepeatsNotice(t *testing.T) {
 		p := start(t, nil, fake(user("id2"), echo("id2"),
 			sendf(`{"type":"result","subtype":"success","is_error":false,"result":"Done.","usage":{"output_tokens":5},"user_message_uuids":["id2"]}`),
 			claudetest.Send(idle)))
-		if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-			t.Fatal(got)
-		}
+		stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 		if got := p.texts(); len(got) != 0 {
 			t.Errorf("%q", got)
 		}

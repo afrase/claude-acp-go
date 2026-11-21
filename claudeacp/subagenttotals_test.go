@@ -74,9 +74,7 @@ func TestBackgroundSubagentTotals(t *testing.T) {
 				sendf(end), sendf(end), result(names("id2")), claudetest.Send(idle))
 			p := start(t, tc.caps, f)
 			sid := p.open(t)
-			if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-				t.Fatal(got)
-			}
+			stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 			var want []string
 			for _, w := range tc.want {
 				want = append(want, string(sid)+" "+w)
@@ -95,9 +93,7 @@ func TestBackgroundSubagentNoUsage(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	if got := totalsLines(p.notes()); got != nil {
 		t.Errorf("totals: %q", got)
 	}

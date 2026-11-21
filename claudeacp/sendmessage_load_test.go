@@ -85,9 +85,7 @@ func TestLoadReplaysSendMessage(t *testing.T) {
 	}
 
 	before := len(p.notes())
-	if got := stopReason(p.prompt(t, acp.SessionID(sid), "once more")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, acp.SessionID(sid), "once more"), "end_turn")
 	got = nil
 	for _, l := range shape(p.notes()[before:], acp.SessionID(sid)) {
 		if strings.HasPrefix(l, "agentA ") || strings.Contains(l, `"agentA"`) {

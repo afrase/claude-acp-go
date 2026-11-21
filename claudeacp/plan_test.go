@@ -54,9 +54,7 @@ func TestTodoWrite(t *testing.T) {
 		result(names("id3")), claudetest.Send(idle), signal(read))
 	p := start(t, nil, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	stopReason(p.prompt(t, sid, "again"))
 	wait(t, read, "the script")
 	plan := "completed:Write tests, in_progress:Fixing the bug, pending:Ship"
@@ -96,9 +94,7 @@ func TestTaskPlan(t *testing.T) {
 		toolResult("t7", `[{"type":"text","text":"#1 [completed] A (main)\n#3 [pending] C [blocked by #1]"}]`, ""),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	want := []string{
 		"pending:A",
 		"pending:A, pending:B",
@@ -127,9 +123,7 @@ func TestSubagentTasks(t *testing.T) {
 		sendf(`{"type":"user","parent_tool_use_id":"toolu_p","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"s1","content":"Updated task #2 status"}]}}`),
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, nil, f)
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	if got, want := p.plans(), []string{"pending:A", "pending:A, pending:B", "pending:A, completed:B"}; !slices.Equal(got, want) {
 		t.Errorf("plans\n%q\nwant\n%q", got, want)
 	}

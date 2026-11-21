@@ -364,9 +364,7 @@ func TestLoadOpenSessionSubagents(t *testing.T) {
 	if _, err := p.load(sid, cwd); err != nil {
 		t.Fatal(err)
 	}
-	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, acp.SessionID(sid), "go"), "end_turn")
 	// claude has written the turn to the transcript.
 	p.writeHistory(t, cwd, sid, append(history, userRec("u2", "go"),
 		asstRec("a2", "msg_2", useBlock("toolu_B", "Agent", `{"description":"Bg","prompt":"go","run_in_background":true}`)),

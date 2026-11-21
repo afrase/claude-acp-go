@@ -102,9 +102,7 @@ func TestEnterPlanMode(t *testing.T) {
 		}
 		return pick(optAllowOnce)(ctx, req)
 	}
-	if got := stopReason(p.prompt(t, p.open(t), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, p.open(t), "go"), "end_turn")
 	if want := []string{"allow-once Yes, plan first", "reject No, start now"}; !slices.Equal(names, want) {
 		t.Errorf("%q", names)
 	}

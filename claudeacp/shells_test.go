@@ -179,9 +179,7 @@ func TestShellTasksNotSubagents(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, withSubagents, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	want := []string{
 		"s1 call toolu_p Agent pending",
 		`s1 subagent {"sessionId":"a1","title":"counter (general-purpose)","description":"Count","capabilities":{"cancel":{}},"state":{"state":"running"}}`,
@@ -215,9 +213,7 @@ func TestShellTaskOfSubagent(t *testing.T) {
 		result(names("id2")), claudetest.Send(idle))
 	p := start(t, withSubagents, f)
 	sid := p.open(t)
-	if got := stopReason(p.prompt(t, sid, "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, sid, "go"), "end_turn")
 	var got []string
 	for _, n := range p.notes() {
 		if u := n.Update.ToolCallUpdate; u != nil && claudeMeta(u.Meta)["task"] != nil {
@@ -318,9 +314,7 @@ func TestLoadOpenSessionShell(t *testing.T) {
 	if _, err := p.load(sid, cwd); err != nil {
 		t.Fatal(err)
 	}
-	if got := stopReason(p.prompt(t, acp.SessionID(sid), "go")); got != "end_turn" {
-		t.Fatal(got)
-	}
+	stopsWith(t, p.prompt(t, acp.SessionID(sid), "go"), "end_turn")
 	// claude has written the turn to the transcript.
 	p.writeHistory(t, cwd, sid, userRec("u1", "Hi"), userRec("u2", "go"),
 		asstRec("a2", "msg_2", useBlock("toolu_A", "Bash", `{"command":"sleep 9","run_in_background":true}`)),
