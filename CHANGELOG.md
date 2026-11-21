@@ -2,6 +2,19 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.7.0 (unreleased)
+
+Needs acp-go v0.5.0. Breaking: `claudeacp.Main` takes a `Config`.
+
+- **Breaking:** `claudeacp.Main(cfg Config) error`, as `codexacp.Main` takes one: a caller can set `Spawn` (or `Log`, `CLIPath`, `ConfigDir`) and keep Main's signal handling. Main fills a nil `Log` (stderr) and an empty `CLIPath` (`$CLAUDE_CODE_EXECUTABLE`), and always sets `SharedGroup`. Callers of `Main()` pass `claudeacp.Config{}`.
+- `claudeacp`: `Main` waits for SIGTERM and SIGINT with `signal.NotifyContext`. The log line on a signal now reads `signal="terminated signal received"` where it read `signal=terminated`.
+- `claudeacp`: a new session's (or fork's) available commands wait for its answer through acp-go's `AfterResponse`, not by matching the bytes the connection writes, so a change to acp-go's encoding can't break it.
+- `claudeagent`: `Exec` runs claude through acp-go's `process` package, the code `acp.Start` runs agents with. Two behaviour changes:
+  - On Windows, a claude started without `SharedGroup` gets a console process group and a job object of its own, so `Wait` (once claude exits) and `Signal(os.Kill)` end what it started (MCP servers, hooks), as a process group already does on Unix. Before, nothing it started was ended there. `Main` sets `SharedGroup`, so it is unaffected.
+  - On Unix, `Signal` reaches claude alone when its group is gone, where it failed.
+- `claudeagent`: a failure to make claude's pipes reads `claudeagent: start <path>: ...`, as a failed start does.
+- Tests: shared helpers for a turn's stop reason, loads, an opened session, line lists and claude's empty control answer.
+
 ## v0.6.1 (2026-11-21)
 
 - Builds on acp-go v0.4.1: a call whose context has ended is never sent, a response with neither result nor error fails its call, a request reusing a live id is refused, and requests wait while 64 answers are unread.
