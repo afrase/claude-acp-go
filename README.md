@@ -182,8 +182,8 @@ be called while a turn runs, and none starts one.
 | `_session/stopTask` | `sessionId`, `taskId` | `{}`, once claude has taken the stop of the background task `taskId`. |
 
 `_session/contextUsage`'s `detail` is claude's own: `"summary"`,
-`"full"`, or absent for claude's default. The answer is passed through as
-claude sent it. Its typed part, as `claudeagent.ContextUsage` decodes it,
+`"full"`, or absent for claude's default, which answers as `"full"` does.
+The answer is passed through as claude sent it. Its typed part, as `claudeagent.ContextUsage` decodes it,
 is `categories` (each an `id`, a `name`, `tokens` and `kind`: `used`,
 `free`, `buffer` or `deferred`), `totalTokens`, `maxTokens`,
 `rawMaxTokens`, `percentage` and `model`. Anything else, such as the
@@ -192,6 +192,25 @@ add, rename or reword it. Classify a category on `kind` and tell one
 from another by `id` (the conversation's is `messages`), never by its
 English `name`.
 Nothing is forked and nothing is written to the transcript.
+
+What a recording of Claude Code 2.1.331 showed: both details carry the
+same top-level keys (`categories`, `totalTokens`, `maxTokens`,
+`rawMaxTokens`, `percentage`, `model`, `gridRows`, `memoryFiles`,
+`mcpTools`, `mcpInstructions`, `agents`, `slashCommands`, `skills`,
+`messageBreakdown`, `apiUsage`, `autoCompactThreshold`,
+`isAutoCompactEnabled`, `autocompactSource`). A `"full"` answer counts
+the conversation in a `messages` category; a `"summary"` one has no
+such category, and its other counts are claude's estimates. A row of
+`memoryFiles` is `{path, type, tokens}`, of `agents` `{agentType, source,
+path, tokens}` (the agents of the project's or the user's settings, not
+claude's built-in ones), of `mcpTools` `{name, serverName, tokens,
+isLoaded}` (once the server has connected), and `skills` holds counts
+and `skillFrontmatter` rows `{name, source, tokens}`. That is claude's
+shape on that version, not the module's: it may change. claude answered
+within milliseconds, also while a command of a turn ran; to answer
+`"full"` it called the API's token-counting endpoint (once a session,
+about thirty calls), which a client on a metered or proxied API may
+want to know.
 
 `_session/stopTask` sends claude's `stop_task` control request: no turn
 runs and no tokens are spent. It is for a task with no session of its
