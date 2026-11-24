@@ -323,7 +323,7 @@ func (r *replayer) notifiedAfter(uuid string) {
 		if !p.top || p.Pending || p.Meta || p.Notification || r.said[p.ID] {
 			continue
 		}
-		if text, ok := userText(p.Prompt); ok {
+		if text, ok := sessions.UserText(p.Prompt); ok {
 			r.chunk("user_message_chunk", "", p.ID, acp.ContentBlock{Text: &acp.TextContent{Text: text}})
 		}
 	}

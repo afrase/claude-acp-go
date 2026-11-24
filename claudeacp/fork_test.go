@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 
 	acp "github.com/afrase/acp-go/unstable"
@@ -149,19 +148,6 @@ func TestAForkThatDoesntStartIsRemoved(t *testing.T) {
 	ms, _ := sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.List(cwd, 0, 0)
 	if len(ms) != 1 || ms[0].ID != sid {
 		t.Errorf("sessions %+v", ms)
-	}
-}
-
-func TestListTitle(t *testing.T) {
-	long := strings.Repeat("é", 300)
-	for _, tc := range []struct{ in, want string }{
-		{"Fix  the\nlogin page ", "Fix the login page"},
-		{long, strings.Repeat("é", 255) + "…"},
-		{strings.Repeat("a", 256), strings.Repeat("a", 256)},
-	} {
-		if got := listTitle(tc.in); got != tc.want {
-			t.Errorf("listTitle(%.20q) = %.20q…", tc.in, got)
-		}
 	}
 }
 

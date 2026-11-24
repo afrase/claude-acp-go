@@ -9,6 +9,10 @@
 // and undocumented; Anthropic's Agent SDKs read and write it the same way,
 // and this package is a port of the Python SDK's helpers (see NOTICE).
 //
+// For a client that reads transcripts itself, UserText cleans a user
+// message's text as a replay shows it, and ListTitle makes a session's
+// title as a list shows it.
+//
 // Session ids must be UUIDs (ErrInvalidID otherwise), so an id can never
 // name a path outside the config folder. Reading is lenient: a line that
 // isn't JSON is skipped, as claude skips it.

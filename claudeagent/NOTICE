@@ -30,3 +30,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+claudeagent/sessions/usertext.go is derived from claude-agent-acp
+(https://github.com/agentclientprotocol/claude-agent-acp, v0.94.0: its list
+of the markers a replayed user message is cleaned of, how it removes them,
+and the commands it hides, in dist/acp-agent.js), modified (rewritten in
+Go). claude-agent-acp is
+
+Copyright 2025 Zed Industries, Inc. and contributors
+
+used under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0), whose full text is in
+claudeacp/NOTICE in this module.

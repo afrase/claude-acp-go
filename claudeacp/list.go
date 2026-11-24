@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -17,9 +16,6 @@ import (
 // listPage is how many sessions a page of session/list has, as
 // claude-agent-acp's; its cursor is "offset:N".
 const listPage = 1000
-
-// maxTitle is the most characters of a listed session's title.
-const maxTitle = 256
 
 func (a *agent) ListSessions(_ context.Context, req *acp.ListSessionsRequest) (*acp.ListSessionsResponse, error) {
 	if req.Cwd != "" && !filepath.IsAbs(req.Cwd) {
@@ -47,19 +43,9 @@ func (a *agent) ListSessions(_ context.Context, req *acp.ListSessionsRequest) (*
 			continue
 		}
 		resp.Sessions = append(resp.Sessions, acp.SessionInfo{SessionID: acp.SessionID(in.ID), Cwd: in.Cwd,
-			Title: listTitle(in.Summary), UpdatedAt: in.LastModified.UTC().Format(time.RFC3339)})
+			Title: sessions.ListTitle(in.Summary), UpdatedAt: in.LastModified.UTC().Format(time.RFC3339)})
 	}
 	return resp, nil
-}
-
-// listTitle is a session's summary on one line, cut to maxTitle
-// characters.
-func listTitle(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= maxTitle {
-		return s
-	}
-	return string([]rune(s)[:maxTitle-1]) + "…"
 }
 
 // DeleteSession deletes a session's transcripts for good. An open one is

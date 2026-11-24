@@ -131,6 +131,13 @@ func main() {
 - `claudeagent.Start` keeps a session open for more prompts, steering,
   interrupts, and model or mode changes.
 - `Options.CanUseTool` answers claude's permission requests.
+- A client that reads claude's transcripts itself (with
+  `claudeagent/sessions`, no agent needed) can show them as the agent
+  does: `sessions.UserText` cleans a user message's text as
+  `session/load`'s replay shows it (claude's markers out, a slash command
+  as typed, `<bash-input>` and its output tags left in to render as a
+  run), and `sessions.ListTitle` makes a session's title as
+  `session/list` shows it.
 - Each package's documentation has runnable examples:
   `go doc github.com/afrase/claude-acp-go/claudeagent`.
 

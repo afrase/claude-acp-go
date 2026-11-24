@@ -172,7 +172,7 @@ func (r *replayer) user(stream string, m sessions.Message, msg claudeagent.APIMe
 			r.toolResult(stream, b, structured)
 		case "text":
 			r.notified(b.Text)
-			if text, ok := userText(b.Text); ok && stream == "" {
+			if text, ok := sessions.UserText(b.Text); ok && stream == "" {
 				r.chunk("user_message_chunk", "", m.UUID, acp.ContentBlock{Text: &acp.TextContent{Text: text}})
 			}
 		case "image":

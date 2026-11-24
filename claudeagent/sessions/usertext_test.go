@@ -1,12 +1,12 @@
-package claudeacp
+package sessions
 
 import "testing"
 
 // A replayed user message loses the markers claude wrote into it and
-// keeps what the user typed, as claude-agent-acp's replay keeps it: a
+// keeps what the user typed, as a replay keeps it: a
 // marker closes only with its own closing tag, an opening tag with none
 // after it is the user's, and a message is a command only when nothing
-// but markers is in it.
+// but markers is in it. A shell command's tags are left in.
 func TestUserText(t *testing.T) {
 	for _, tc := range []struct {
 		in, want string
@@ -24,9 +24,12 @@ func TestUserText(t *testing.T) {
 		{"<command-name>/doctor</command-name><local-command-stdout>ok</local-command-stdout>", "", false},
 		{"<local-command-stdout>## Context Usage</local-command-stdout>", "", false},
 		{"<system-reminder>a</task-notification>b</system-reminder>c", "c", true},
+		{"!git status", "!git status", true},
+		{"<bash-input>git status</bash-input>", "<bash-input>git status</bash-input>", true},
+		{"<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>", "<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>", true},
 	} {
-		if got, ok := userText(tc.in); got != tc.want || ok != tc.ok {
-			t.Errorf("userText(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
+		if got, ok := UserText(tc.in); got != tc.want || ok != tc.ok {
+			t.Errorf("UserText(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
 }
