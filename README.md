@@ -221,8 +221,11 @@ session of its own is better stopped by `session/cancel` on that
 session, which also withdraws what the subagent still asks the user.
 Recorded on Claude Code 2.1.331, with claude idle: a stopped background
 command or workflow ends as claude's `TaskStop` ends it, `killed` then
-`stopped`, before the call is answered, and no turn starts; claude tells
-the model of the stop with the next prompt. claude answers a stop of a
+`stopped`, and no turn starts; claude tells the model of the stop with
+the next prompt. claude sends that end before its answer, but the agent
+passes the answer on as it comes, so the two updates may reach the
+client just after `{}`: a client ends the task on them, not on the
+answer. claude answers a stop of a
 task already ended, or of an id it never had, with success too, so `{}`
 says claude took the request, not that the task ran. An error claude
 gives is the call's error, in claude's words.
