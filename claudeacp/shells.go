@@ -35,11 +35,13 @@ type shellTask struct {
 	Type string `json:"type"` // claude's task type: "local_bash", "local_workflow"
 	// Status is "running", then claude's word for the end: "completed",
 	// "failed" (killed from outside too), or "killed" then "stopped" for
-	// a stop (claude's TaskStop).
+	// a stop (claude's TaskStop, or stop_task: StopTaskMethod).
 	Status     string `json:"status"`
 	OutputFile string `json:"outputFile,omitempty"` // where claude wrote its output, once it ended
-	Summary    string `json:"summary,omitempty"`    // claude's line on the end, which names an exit code
-	EndTime    int64  `json:"endTime,omitempty"`    // when it ended, in milliseconds since the epoch
+	// Summary is claude's line on the end: a command's that ended by
+	// itself names its exit code; a stopped task's is its description.
+	Summary string `json:"summary,omitempty"`
+	EndTime int64  `json:"endTime,omitempty"` // when it ended, in milliseconds since the epoch
 }
 
 // shell is a background command's or a workflow's task, and the call

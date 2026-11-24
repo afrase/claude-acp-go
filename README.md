@@ -219,9 +219,13 @@ reaches the client as claude tells it (see
 [Background commands](#background-commands)). A subagent shown as a
 session of its own is better stopped by `session/cancel` on that
 session, which also withdraws what the subagent still asks the user.
-What claude answers for a task id it doesn't know, or one already
-ended, is passed through: an error claude gives is the call's error, in
-claude's words.
+Recorded on Claude Code 2.1.331, with claude idle: a stopped background
+command or workflow ends as claude's `TaskStop` ends it, `killed` then
+`stopped`, before the call is answered, and no turn starts; claude tells
+the model of the stop with the next prompt. claude answers a stop of a
+task already ended, or of an id it never had, with success too, so `{}`
+says claude took the request, not that the task ran. An error claude
+gives is the call's error, in claude's words.
 
 ### Background commands
 
@@ -247,7 +251,8 @@ only `_meta`:
   `Workflow`.
 - `status` is `running` when claude starts the task, then claude's word
   for its end: `completed`; `failed` (a non-zero exit, or killed from
-  outside); `killed` then `stopped` for claude's `TaskStop`.
+  outside); `killed` then `stopped` for claude's `TaskStop` or a
+  `_session/stopTask`.
 - `endTime` (milliseconds since the epoch) comes with the end. `outputFile`
   and `summary` come with claude's notification, a moment later. claude
   gives a command's exit code only in `summary`'s text.

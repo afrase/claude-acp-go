@@ -19,9 +19,16 @@ import (
 // workflow. A subagent shown as a session of its own is better stopped by
 // session/cancel on that session, which also withdraws what the subagent
 // (and the foreground subagents it waits on) still asks the user; this
-// method stops its task alone. What claude answers for a task id it
-// doesn't know, or one already ended, is the answer: an error claude
-// gives is the call's error, as claude worded it.
+// method stops its task alone.
+//
+// In a recording of Claude Code 2.1.331, a stop of a background command
+// and of a workflow, with claude idle, ended the task as claude's
+// TaskStop does (task_updated "killed", then task_notification
+// "stopped", before claude answered) and started no turn: claude tells
+// the model of the stop at the next prompt. claude answered a stop of a
+// task already ended, and of a task id it never had, as it answers any:
+// with success, so {} says claude took the request, not that a task was
+// running. An error claude gives is the call's error, in claude's words.
 const StopTaskMethod = "_session/stopTask"
 
 // StopTaskRequest is StopTaskMethod's params: the open session, and the

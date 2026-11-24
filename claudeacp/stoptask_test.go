@@ -48,18 +48,19 @@ func TestStopTask(t *testing.T) {
 	sameLines(t, statuses, []string{"toolu_A running", "toolu_A killed", "toolu_A stopped"})
 }
 
-// claude's refusal (a task it doesn't know, say) is the call's error, as
-// claude worded it; no task id, or a session that isn't open, is refused
-// before claude is asked.
+// An error claude answers with is the call's error, in claude's words
+// (claude answered a task id it never had with success, in the
+// recording: TestStopTaskRecorded); no task id, or a session that isn't
+// open, is refused before claude is asked.
 func TestStopTaskRefused(t *testing.T) {
 	f := fake()
 	f.Respond(`{"type":"control_request","request":{"subtype":"stop_task"}}`,
-		`{"type":"control_response","response":{"subtype":"error","request_id":"$req","error":"No task found with ID: nope"}}`)
+		`{"type":"control_response","response":{"subtype":"error","request_id":"$req","error":"stop refused"}}`)
 	p, sid := startOpen(t, nil, f)
 	var r StopTaskResponse
 	err := p.Call(t.Context(), StopTaskMethod, StopTaskRequest{SessionID: string(sid), TaskID: "nope"}, &r)
-	if err == nil || !strings.Contains(err.Error(), "No task found with ID: nope") {
-		t.Errorf("claude's refusal: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "stop refused") {
+		t.Errorf("claude's error: %v", err)
 	}
 	for _, req := range []StopTaskRequest{{SessionID: string(sid), TaskID: " "}, {SessionID: "nope", TaskID: "bA"}} {
 		if err := p.Call(t.Context(), StopTaskMethod, req, &r); err == nil {
