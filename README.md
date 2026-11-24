@@ -171,6 +171,7 @@ be called while a turn runs, and none starts one.
 |---|---|---|
 | `_session/generateTitle` | `sessionId`, `text` | `{"title": …}`: a short title for any text, made by claude's fast model. The session's own title is left as it was. |
 | `_session/contextUsage` | `sessionId`, `detail` | How the context window is spent: claude's `get_context_usage` answer, whole. |
+| `_session/stopTask` | `sessionId`, `taskId` | `{}`, once claude has taken the stop of the background task `taskId`. |
 
 `_session/contextUsage`'s `detail` is claude's own: `"summary"`,
 `"full"`, or absent for claude's default. The answer is passed through as
@@ -181,6 +182,17 @@ is `categories` (each a `name`, `tokens` and `kind`: `used`, `free`,
 answer carries, is claude's undocumented own: claude may add, rename or
 reword it. Classify a category on `kind`, never on its English `name`.
 Nothing is forked and nothing is written to the transcript.
+
+`_session/stopTask` sends claude's `stop_task` control request: no turn
+runs and no tokens are spent. It is for a task with no session of its
+own, such as a background command or a workflow; the task's end then
+reaches the client as claude tells it (see
+[Background commands](#background-commands)). A subagent shown as a
+session of its own is better stopped by `session/cancel` on that
+session, which also withdraws what the subagent still asks the user.
+What claude answers for a task id it doesn't know, or one already
+ended, is passed through: an error claude gives is the call's error, in
+claude's words.
 
 ### Background commands
 

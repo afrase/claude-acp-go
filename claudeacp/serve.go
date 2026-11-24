@@ -306,6 +306,8 @@ func (a *agent) ExtMethod(ctx context.Context, method string, params json.RawMes
 		return a.generateTitle(ctx, params)
 	case ContextUsageMethod:
 		return a.contextUsage(ctx, params)
+	case StopTaskMethod:
+		return a.stopTask(ctx, params)
 	}
 	return a.UnimplementedAgent.ExtMethod(ctx, method, params)
 }
