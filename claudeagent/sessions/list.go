@@ -6,6 +6,7 @@
 package sessions
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -52,7 +53,10 @@ type Info struct {
 	// Fork), where its first copied record came from: the session it was
 	// forked from, and that record's uuid there (the first message the
 	// fork copied, not the one it was forked at). nil for a session that
-	// is no fork, or when no record in the transcript's first 64 KiB says.
+	// is no fork. Read from the first 64 KiB, and of a record they cut
+	// short (a fork's first, holding a pasted screenshot, say) from the
+	// rest of it: nil, too, when none of those says, as for a first copied
+	// record over 64 MiB.
 	ForkedFrom *ForkedFrom
 }
 
@@ -212,6 +216,10 @@ type lite struct {
 	head, tail string
 	size       int64
 	modified   time.Time
+	// path is the transcript's, and cut the offset of the record the head
+	// cut short; -1 when it cut none.
+	path string
+	cut  int64
 }
 
 // readLite reads path's first and last 64 KiB; false for an empty file or
@@ -235,7 +243,10 @@ func readLite(path string) (lite, bool) {
 	if n == 0 {
 		return lite{}, false
 	}
-	l := lite{head: strings.ToValidUTF8(string(buf[:n]), "�"), size: fi.Size(), modified: fi.ModTime()}
+	l := lite{head: strings.ToValidUTF8(string(buf[:n]), "�"), size: fi.Size(), modified: fi.ModTime(), path: path, cut: -1}
+	if at := bytes.LastIndexByte(buf[:n], '\n') + 1; fi.Size() > int64(n) && at < n {
+		l.cut = int64(at)
+	}
 	l.tail = l.head
 	if fi.Size() > liteRead {
 		n, _ = f.ReadAt(buf, fi.Size()-liteRead)
@@ -282,7 +293,10 @@ func (l lite) info(id, cwd string) (Info, bool) {
 }
 
 // forkedFrom is the first forkedFrom a record of the transcript's start
-// has; nil when none has one.
+// has; nil when none has one. Both claude and Fork write it at a record's
+// end, so of a record the head cut short (a pasted screenshot, a long
+// paste) the rest is read, as far as forkScanLimit, for its last
+// forkedFrom key.
 func (l lite) forkedFrom() *ForkedFrom {
 	for line := range strings.SplitSeq(l.head, "\n") {
 		if !strings.Contains(line, `"forkedFrom"`) {
@@ -295,7 +309,57 @@ func (l lite) forkedFrom() *ForkedFrom {
 			return r.ForkedFrom
 		}
 	}
-	return nil
+	if l.cut < 0 {
+		return nil
+	}
+	return forkedFromAt(l.path, l.cut)
+}
+
+// forkScanLimit is how far into a record forkedFromAt reads.
+const forkScanLimit = 64 << 20
+
+// forkKey is a forkedFrom key as claude and Fork write it. Unescaped
+// quotes can't be in a JSON string, so a match is a key.
+const forkKey = `"forkedFrom":`
+
+// forkedFromAt reads path's record at offset at, a chunk at a time, for
+// its last forkedFrom key and decodes the value there; nil when the
+// record has none (or isn't a fork's) within forkScanLimit.
+func forkedFromAt(path string, at int64) *ForkedFrom {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	r := io.NewSectionReader(f, at, forkScanLimit)
+	buf := make([]byte, liteRead+len(forkKey))
+	found, keep := int64(-1), 0 // keep: the last chunk's tail, which a key may span
+	for read := int64(0); ; {
+		n, err := r.Read(buf[keep:])
+		window := buf[:keep+n]
+		end := bytes.IndexByte(window[keep:], '\n')
+		if end >= 0 {
+			window = window[:keep+end]
+		}
+		if i := bytes.LastIndex(window, []byte(forkKey)); i >= 0 {
+			found = read - int64(keep) + int64(i)
+		}
+		if end >= 0 || err != nil {
+			break
+		}
+		read += int64(n)
+		keep = min(len(forkKey)-1, len(window))
+		copy(buf, window[len(window)-keep:])
+	}
+	if found < 0 {
+		return nil
+	}
+	var ff ForkedFrom
+	d := json.NewDecoder(io.NewSectionReader(f, at+found+int64(len(forkKey)), 4<<10))
+	if d.Decode(&ff) != nil || ff.SessionID == "" {
+		return nil
+	}
+	return &ff
 }
 
 // parseTime reads a time as the CLI writes them (JavaScript's

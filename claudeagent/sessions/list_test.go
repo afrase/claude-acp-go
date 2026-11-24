@@ -369,3 +369,91 @@ func TestInfoForkedFrom(t *testing.T) {
 		}
 	}
 }
+
+// A fork whose first copied record is longer than the head List reads (a
+// pasted screenshot, a long paste) still says where it came from: its
+// forkedFrom comes at the record's end, past the head. So does a fork of
+// that fork, and a session that is no fork still has none.
+func TestInfoForkedFromPastTheHead(t *testing.T) {
+	config, cwd, dir := project(t)
+	id, plain := newUUID(), newUUID()
+	long := strings.Repeat("x", 70<<10)
+	writeLines(t, dir, id,
+		`{"type":"user","uuid":"u1","sessionId":"`+id+`","message":{"role":"user","content":"`+long+`"},"timestamp":"2026-01-01T00:00:00.000Z"}`,
+		`{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"`+id+`","message":{"id":"msg_1","role":"assistant","content":"ok"},"timestamp":"2026-01-01T00:00:01.000Z"}`)
+	writeLines(t, dir, plain,
+		`{"type":"user","uuid":"p1","sessionId":"`+plain+`","message":{"role":"user","content":"`+long+`"},"timestamp":"2026-01-01T00:00:00.000Z"}`,
+		`{"type":"custom-title","customTitle":"no fork","sessionId":"`+plain+`"}`)
+	store := Store{ConfigDir: config}
+	fork, err := store.Fork(id, cwd, ForkOptions{})
+	testNoErr(t, err)
+	again, err := store.Fork(fork, cwd, ForkOptions{})
+	testNoErr(t, err)
+	forkFirst := firstUUID(t, filepath.Join(dir, fork+".jsonl"))
+	for _, c := range []struct {
+		id   string
+		want *ForkedFrom
+	}{{fork, &ForkedFrom{SessionID: id, MessageUUID: "u1"}}, {again, &ForkedFrom{SessionID: fork, MessageUUID: forkFirst}}, {plain, nil}} {
+		info, err := ReadInfo(filepath.Join(dir, c.id+".jsonl"))
+		testNoErr(t, err)
+		if (info.ForkedFrom == nil) != (c.want == nil) || c.want != nil && *info.ForkedFrom != *c.want {
+			t.Errorf("%s: ForkedFrom %+v, want %+v", c.id, info.ForkedFrom, c.want)
+		}
+	}
+	for _, info := range mustList(t, config, cwd) {
+		if info.ID == fork && (info.ForkedFrom == nil || info.ForkedFrom.SessionID != id) {
+			t.Errorf("List: the fork's ForkedFrom %+v", info.ForkedFrom)
+		}
+	}
+}
+
+// The rest of a cut record is read a chunk at a time: a forkedFrom key
+// the chunks split is still found, the record's last one wins, and one in
+// the next record isn't the cut record's.
+func TestForkedFromAtChunks(t *testing.T) {
+	dir := t.TempDir()
+	want := ForkedFrom{SessionID: "s", MessageUUID: "m"}
+	chunk := liteRead + len(forkKey)
+	for _, c := range []struct {
+		name string
+		text func(pad int) string
+		want *ForkedFrom
+	}{
+		{"split", func(pad int) string {
+			return `{"x":"` + strings.Repeat("y", pad) + `","forkedFrom":{"sessionId":"s","messageUuid":"m"}}` + "\n"
+		}, &want},
+		{"last wins", func(pad int) string {
+			return `{"x":{"forkedFrom":{"sessionId":"no","messageUuid":"no"}},"y":"` + strings.Repeat("y", pad) +
+				`","forkedFrom":{"sessionId":"s","messageUuid":"m"}}` + "\n"
+		}, &want},
+		{"next record", func(pad int) string {
+			return `{"x":"` + strings.Repeat("y", pad) + `"}` + "\n" + `{"forkedFrom":{"sessionId":"s","messageUuid":"m"}}` + "\n"
+		}, nil},
+	} {
+		for pad := chunk - 2*len(forkKey); pad <= chunk+len(forkKey); pad++ {
+			path := filepath.Join(dir, "t.jsonl")
+			if err := os.WriteFile(path, []byte(c.text(pad)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := forkedFromAt(path, 0)
+			if (got == nil) != (c.want == nil) || c.want != nil && *got != *c.want {
+				t.Fatalf("%s, pad %d: %+v, want %+v", c.name, pad, got, c.want)
+			}
+		}
+	}
+}
+
+// firstUUID is the uuid of path's first record.
+func firstUUID(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	testNoErr(t, err)
+	first, _, _ := strings.Cut(string(b), "\n")
+	var r struct {
+		UUID string `json:"uuid"`
+	}
+	if err := json.Unmarshal([]byte(first), &r); err != nil || r.UUID == "" {
+		t.Fatalf("the first record's uuid: %q, %v", r.UUID, err)
+	}
+	return r.UUID
+}
