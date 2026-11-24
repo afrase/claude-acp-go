@@ -2,6 +2,12 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.8.0 (unreleased)
+
+What a client had to scrape from claude, or guess, the library now says.
+
+- `claudeacp`: a `_session/contextUsage` extension method (`ContextUsageMethod`, `ContextUsageRequest`): how an open session's context window is spent, from claude's `get_context_usage` control request, with claude's own `detail` (`"summary"`, `"full"`, or none for claude's default). It asks the model nothing, forks nothing and writes nothing to the transcript, and it answers while a turn runs. The answer is claude's, whole, as claude sent it: the part `claudeagent.ContextUsage` types (`categories` with their `kind`, `totalTokens`, `maxTokens`, `rawMaxTokens`, `percentage`, `model`) and whatever else claude puts in, such as a `"full"` answer's lists. It is passed through, not retyped, so a field claude adds reaches the client and one it changes can't fail the call. A client that showed the context by prompting `/context` in a throwaway fork and parsing claude's markdown can ask this instead.
+
 ## v0.7.0 (2026-11-21)
 
 Needs acp-go v0.5.0. Breaking: `claudeacp.Main` takes a `Config`.

@@ -160,6 +160,28 @@ Not supported:
 - **Windows** is not tested. The module builds there (CI checks that), but
   the tests run on macOS and Linux only.
 
+### Extension methods
+
+Besides ACP's own methods (and `_session/steering`, under Prompts), the
+agent answers these extension methods. Each takes an open session's id
+(`sessionId`); one that isn't open is an invalid-params error. Each can
+be called while a turn runs, and none starts one.
+
+| Method | Params | Answer |
+|---|---|---|
+| `_session/generateTitle` | `sessionId`, `text` | `{"title": …}`: a short title for any text, made by claude's fast model. The session's own title is left as it was. |
+| `_session/contextUsage` | `sessionId`, `detail` | How the context window is spent: claude's `get_context_usage` answer, whole. |
+
+`_session/contextUsage`'s `detail` is claude's own: `"summary"`,
+`"full"`, or absent for claude's default. The answer is passed through as
+claude sent it. Its typed part, as `claudeagent.ContextUsage` decodes it,
+is `categories` (each a `name`, `tokens` and `kind`: `used`, `free`,
+`buffer` or `deferred`), `totalTokens`, `maxTokens`, `rawMaxTokens`,
+`percentage` and `model`. Anything else, such as the lists a `"full"`
+answer carries, is claude's undocumented own: claude may add, rename or
+reword it. Classify a category on `kind`, never on its English `name`.
+Nothing is forked and nothing is written to the transcript.
+
 ### Background commands
 
 A Bash call with `run_in_background` completes at once, but its command
