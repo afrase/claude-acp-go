@@ -275,6 +275,14 @@ only `_meta`:
   which says `killed`.
 - `_session/stopTask` stops one (see
   [Extension methods](#extension-methods)).
+- A foreground command that runs for more than a few seconds is a claude
+  task too (claude says `is_backgrounded: false`): its Bash call gets
+  the same updates, `running` then `completed`, before its result. A
+  client that shows background commands by these updates should look
+  at the call's own `rawInput.run_in_background` as well.
+- The tests replay these shapes as recorded on the real claude: a
+  workflow's run on Claude Code 2.1.325, stops by `_session/stopTask` and
+  a foreground command's task on 2.1.331. A later claude may change them.
 
 ### Background subagents
 

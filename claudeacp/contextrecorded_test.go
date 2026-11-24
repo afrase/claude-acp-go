@@ -160,6 +160,21 @@ func TestContextUsageRecorded(t *testing.T) {
 	if err := fk.Err(); err != nil {
 		t.Fatal(err)
 	}
+
+	// That command ran in the foreground, but for long enough that claude
+	// made it a task (is_backgrounded false): its call got the task's
+	// updates before its result.
+	var statuses []string
+	for _, n := range p.notes() {
+		if u := n.Update.ToolCallUpdate; u != nil && u.ToolCallID == "toolu_wait" {
+			if task, ok := claudeMeta(u.Meta)["task"].(map[string]any); ok {
+				statuses = append(statuses, str(task["status"]))
+			} else if u.Status != "" {
+				statuses = append(statuses, "call "+string(u.Status))
+			}
+		}
+	}
+	sameLines(t, statuses, []string{"running", "completed", "call completed"})
 }
 
 // A "full" answer lists the memory files, agents, MCP tools and skills
