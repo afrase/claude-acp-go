@@ -17,8 +17,8 @@ func TestLoadReplaysTimestamps(t *testing.T) {
 	think := map[string]any{"type": "thinking", "thinking": "Hmm.", "signature": "x"}
 	p.writeHistory(t, cwd, sid,
 		userRec("u1", []any{textBlock("Hi"), textBlock("there")}, "timestamp", "2026-11-16T03:07:16.039Z"),
-		withField(asstRec("a1", "msg_1", think), "timestamp", "2026-11-16T03:07:16.059Z"),
-		withField(asstRec("a2", "msg_1", textBlock("Hello.")), "timestamp", "2026-11-16T03:07:17.000Z"),
+		withTime(asstRec("a1", "msg_1", think), "2026-11-16T03:07:16.059Z"),
+		withTime(asstRec("a2", "msg_1", textBlock("Hello.")), "2026-11-16T03:07:17.000Z"),
 		userRec("u2", "Bye"),
 		asstRec("a3", "msg_2", textBlock("Bye.")),
 	)
@@ -49,9 +49,9 @@ func TestLoadReplaysTimestamps(t *testing.T) {
 	})
 }
 
-// withField is r with the field name set to v.
-func withField(r rec, name string, v any) rec {
-	r[name] = v
+// withTime is r with its timestamp ts.
+func withTime(r rec, ts string) rec {
+	r["timestamp"] = ts
 	return r
 }
 
@@ -64,13 +64,13 @@ func TestLoadReplaysSubagentTimestamps(t *testing.T) {
 	cwd, sid := t.TempDir(), nthUUID(1)
 	p.writeHistory(t, cwd, sid,
 		userRec("u1", "Count", "timestamp", "2026-11-16T03:07:16.039Z"),
-		withField(asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count"}`)),
-			"timestamp", "2026-11-16T03:07:16.059Z"),
+		withTime(asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count"}`)),
+			"2026-11-16T03:07:16.059Z"),
 		userRec("r1", resultBlocks("toolu_A", "2", false), "timestamp", "2026-11-16T03:07:19.000Z"),
 	)
 	p.writeSubagent(t, cwd, sid, "agentA", "toolu_A",
-		withField(asstRec("s1", "msg_A1", textBlock("1, 2")), "timestamp", "2026-11-16T03:07:18.000Z"),
-		withField(asstRec("s2", "msg_A1", textBlock("3")), "timestamp", "2026-11-16T03:07:18.500Z"))
+		withTime(asstRec("s1", "msg_A1", textBlock("1, 2")), "2026-11-16T03:07:18.000Z"),
+		withTime(asstRec("s2", "msg_A1", textBlock("3")), "2026-11-16T03:07:18.500Z"))
 	p.mustLoad(t, sid, cwd)
 	var got []string
 	for _, n := range p.notes() {
