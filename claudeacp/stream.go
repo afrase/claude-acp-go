@@ -338,3 +338,14 @@ func chunkUpdate(kind, parent, msgID string, c acp.ContentBlock) acp.SessionUpda
 	}
 	return u
 }
+
+// chunkOf is the chunk a chunkUpdate carries.
+func chunkOf(u acp.SessionUpdate) *acp.ContentChunk {
+	switch {
+	case u.UserMessageChunk != nil:
+		return u.UserMessageChunk
+	case u.AgentThoughtChunk != nil:
+		return u.AgentThoughtChunk
+	}
+	return u.AgentMessageChunk
+}

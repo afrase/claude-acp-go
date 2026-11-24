@@ -260,6 +260,25 @@ the same names:
 - `session/load` replays it from the `<usage>` of claude's
   `<task-notification>` in the history.
 
+### Replayed message times
+
+`session/load` replays the history as chunks of messages. The first
+chunk of each replayed message, the user's or the agent's (a thought
+or text), says when the message was sent, under `_meta`:
+
+```json
+{"sessionUpdate": "user_message_chunk", "messageId": "…",
+ "content": {"type": "text", "text": "Fix the login page"},
+ "_meta": {"claudeCode": {"timestamp": "2026-11-16T03:07:16.039Z"}}}
+```
+
+- It is the transcript record's own `timestamp`, as claude wrote it
+  (JavaScript's `toISOString`). An agent message claude wrote as several
+  records, a record a block, has its first record's.
+- A message whose record has no timestamp has none, and neither has a
+  prompt claude took into a running turn (the history keeps no time for
+  it). Live updates carry none: a client dates those as they come.
+
 ## How it relates to the others
 
 - **claude-agent-acp** (Zed Industries, Apache-2.0) is the Node ACP agent

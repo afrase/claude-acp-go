@@ -27,6 +27,7 @@ type claudeCodeMeta struct {
 	Level           *string         `json:"level,omitempty"`           // a notice's level, said even when ""
 	PromptQueueing  bool            `json:"promptQueueing,omitempty"`  // in initialize's answer
 	Task            *shellTask      `json:"task,omitempty"`            // a background command's task, on its call
+	Timestamp       string          `json:"timestamp,omitempty"`       // a replayed message's, on its first chunk
 
 	nonExecution // why a tool's result isn't its output
 }

@@ -45,6 +45,17 @@ type replayer struct {
 	delivered map[string]bool
 	shells    map[string]*shell   // the background commands the history started, by task id
 	launches  map[string]launched // the calls that started a subagent in the background, by id
+	// sent are the messages replayed, by the id their chunks carry, each
+	// with its first record's timestamp ("" when it has none), until
+	// their first chunk has gone with it.
+	sent map[string]*sentAt
+}
+
+// sentAt is a replayed message's time, as its first record says it, and
+// whether a chunk has carried it yet.
+type sentAt struct {
+	timestamp string
+	told      bool
 }
 
 // queuedPrompt is a prompt claude kept other than as a user message, and
@@ -65,7 +76,7 @@ func (s *session) replay(ms []sessions.Message, t *sessions.Transcript) {
 	r := &replayer{s: s, t: t, agents: map[string]sessions.Subagent{}, calls: map[callKey]*tool{},
 		inputs: map[string]launch{}, byID: map[string]*replayedKid{}, byAgent: map[string]sessions.Subagent{},
 		queued: map[string][]queuedPrompt{}, said: map[string]bool{}, delivered: map[string]bool{}, shells: map[string]*shell{},
-		launches: map[string]launched{}}
+		launches: map[string]launched{}, sent: map[string]*sentAt{}}
 	for _, m := range ms {
 		r.said[m.UUID] = true
 	}
@@ -114,8 +125,10 @@ func (r *replayer) messages(ms []sessions.Message, stream string) {
 		if json.Unmarshal(m.Message, &msg) == nil {
 			switch m.Type {
 			case "assistant":
+				r.dated(msg.ID, m)
 				r.assistant(stream, msg)
 			case "user":
+				r.dated(m.UUID, m)
 				r.user(stream, m, msg)
 			}
 		}
@@ -183,9 +196,33 @@ func (r *replayer) user(stream string, m sessions.Message, msg claudeagent.APIMe
 	}
 }
 
-// chunk sends a chunk of a message of the stream of call stream.
+// dated keeps when the message id was sent, as m, its first record, says
+// it: the record's own timestamp, as claude wrote it. A message split
+// over several records (an agent message, a record a block) keeps its
+// first's.
+func (r *replayer) dated(id string, m sessions.Message) {
+	if id == "" || r.sent[id] != nil {
+		return
+	}
+	var rec struct {
+		Timestamp string `json:"timestamp"`
+	}
+	_ = json.Unmarshal(m.Raw, &rec)
+	r.sent[id] = &sentAt{timestamp: rec.Timestamp}
+}
+
+// chunk sends a chunk of a message of the stream of call stream. The
+// message's first chunk says when it was sent, under
+// _meta.claudeCode.timestamp, when its record says.
 func (r *replayer) chunk(kind, stream, id string, c acp.ContentBlock) {
-	r.s.kids.emit(stream, chunkUpdate(kind, stream, id, c))
+	u := chunkUpdate(kind, stream, id, c)
+	if at := r.sent[id]; at != nil && !at.told {
+		at.told = true
+		if at.timestamp != "" {
+			chunkOf(u).Meta = claudeCodeMeta{ParentToolUseID: stream, Timestamp: at.timestamp}.meta()
+		}
+	}
+	r.s.kids.emit(stream, u)
 }
 
 // toolUse shows a call with its whole input; the main agent's plan tools
