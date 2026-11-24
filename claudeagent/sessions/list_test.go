@@ -338,3 +338,34 @@ func sameSet(a, b []string) bool {
 	}
 	return true
 }
+
+// A fork's details say where it was forked from, its first copied
+// record's forkedFrom, whoever wrote it: Fork, or claude, whose fork may
+// start with records that have none. A session that is no fork has none.
+func TestInfoForkedFrom(t *testing.T) {
+	config, cwd, dir := project(t)
+	id, other, plain := newUUID(), newUUID(), newUUID()
+	forkSource(t, dir, id)
+	fork, err := Store{ConfigDir: config}.Fork(id, cwd, ForkOptions{})
+	testNoErr(t, err)
+	writeLines(t, dir, other,
+		`{"type":"queue-operation","operation":"enqueue","sessionId":"`+other+`"}`,
+		`{"type":"user","uuid":"n1","sessionId":"`+other+`","message":{"role":"user","content":"hi"},"forkedFrom":{"sessionId":"`+id+`","messageUuid":"u2"}}`,
+		`{"type":"assistant","uuid":"n2","sessionId":"`+other+`","message":{"role":"assistant","content":"yes"},"forkedFrom":{"sessionId":"`+id+`","messageUuid":"a2"}}`)
+	fixture{prompt: "no fork"}.write(t, dir, plain)
+	for _, c := range []struct {
+		id   string
+		want *ForkedFrom
+	}{{fork, &ForkedFrom{SessionID: id, MessageUUID: "u1"}}, {other, &ForkedFrom{SessionID: id, MessageUUID: "u2"}}, {plain, nil}, {id, nil}} {
+		info, err := ReadInfo(filepath.Join(dir, c.id+".jsonl"))
+		testNoErr(t, err)
+		if (info.ForkedFrom == nil) != (c.want == nil) || c.want != nil && *info.ForkedFrom != *c.want {
+			t.Errorf("%s: ForkedFrom %+v, want %+v", c.id, info.ForkedFrom, c.want)
+		}
+	}
+	for _, info := range mustList(t, config, cwd) {
+		if info.ID == fork && (info.ForkedFrom == nil || info.ForkedFrom.SessionID != id) {
+			t.Errorf("List: the fork's ForkedFrom %+v", info.ForkedFrom)
+		}
+	}
+}

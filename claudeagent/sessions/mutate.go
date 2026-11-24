@@ -98,8 +98,10 @@ type copied struct {
 	obj *object
 }
 
-// forkedFrom is where a fork's record was copied from.
-type forkedFrom struct {
+// ForkedFrom is where a fork's record was copied from: the session, and the
+// uuid the record had there. claude writes it on each record of a fork it
+// makes (claude --fork-session), as Fork does.
+type ForkedFrom struct {
 	SessionID   string `json:"sessionId"`
 	MessageUUID string `json:"messageUuid"`
 }
@@ -190,7 +192,7 @@ func forkLines(records []copied, replacements []json.RawMessage, id, upTo, cwd s
 		if cwd != "" && o.has("cwd") {
 			o.set("cwd", cwd)
 		}
-		o.set("forkedFrom", forkedFrom{SessionID: id, MessageUUID: old})
+		o.set("forkedFrom", ForkedFrom{SessionID: id, MessageUUID: old})
 		for _, k := range []string{"teamName", "agentName", "slug", "sourceToolAssistantUUID"} {
 			o.remove(k)
 		}

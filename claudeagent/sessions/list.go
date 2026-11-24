@@ -7,6 +7,7 @@ package sessions
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -47,6 +48,12 @@ type Info struct {
 	Created time.Time
 	// Size is the transcript's size in bytes.
 	Size int64
+	// ForkedFrom is, for a fork (made by claude --fork-session or by
+	// Fork), where its first copied record came from: the session it was
+	// forked from, and that record's uuid there (the first message the
+	// fork copied, not the one it was forked at). nil for a session that
+	// is no fork, or when no record in the transcript's first 64 KiB says.
+	ForkedFrom *ForkedFrom
 }
 
 // List returns the sessions of cwd and of its git repository's other
@@ -270,7 +277,25 @@ func (l lite) info(id, cwd string) (Info, bool) {
 	if ts := firstString(l.head, "timestamp"); ts != "" {
 		info.Created = parseTime(ts)
 	}
+	info.ForkedFrom = l.forkedFrom()
 	return info, true
+}
+
+// forkedFrom is the first forkedFrom a record of the transcript's start
+// has; nil when none has one.
+func (l lite) forkedFrom() *ForkedFrom {
+	for line := range strings.SplitSeq(l.head, "\n") {
+		if !strings.Contains(line, `"forkedFrom"`) {
+			continue
+		}
+		var r struct {
+			ForkedFrom *ForkedFrom `json:"forkedFrom"`
+		}
+		if json.Unmarshal([]byte(line), &r) == nil && r.ForkedFrom != nil && r.ForkedFrom.SessionID != "" {
+			return r.ForkedFrom
+		}
+	}
+	return nil
 }
 
 // parseTime reads a time as the CLI writes them (JavaScript's

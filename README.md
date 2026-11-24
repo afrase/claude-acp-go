@@ -137,7 +137,8 @@ func main() {
   `session/load`'s replay shows it (claude's markers out, a slash command
   as typed, `<bash-input>` and its output tags left in to render as a
   run), and `sessions.ListTitle` makes a session's title as
-  `session/list` shows it.
+  `session/list` shows it. `sessions.Info.ForkedFrom` says which session
+  a fork was made from.
 - Each package's documentation has runnable examples:
   `go doc github.com/afrase/claude-acp-go/claudeagent`.
 
