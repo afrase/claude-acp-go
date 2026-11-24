@@ -1,11 +1,16 @@
 package claudeacp
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/afrase/claude-acp-go/claudeagent/claudetest"
+	"github.com/afrase/claude-acp-go/claudeagent/sessions"
 )
 
 // testdata/shells/stoptask and workflow-stoptask are claude's side of two
@@ -96,5 +101,60 @@ func TestStopTaskRecorded(t *testing.T) {
 				t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
 			}
 		})
+	}
+}
+
+// A load replays a stop by _session/stopTask as the live session ended
+// it: stopped. claude's transcript keeps no TaskStop call for it, only
+// its notification, queued for the model (a queue-operation, and, once a
+// prompt took it, a queued_command attachment), whose status says
+// "killed". Cut at the stop, the transcript is a session closed before
+// another prompt, whose notification is still queued.
+func TestLoadReplaysStopTaskEnds(t *testing.T) {
+	for _, tc := range []struct{ name, sid, typ, want string }{
+		{"stoptask", "f2b4b244-8e18-4abd-8a07-9ab6d724c492", "Bash",
+			`{"id":"bfz31x1ks","type":"local_bash","status":"stopped","outputFile":"/tmp/claude/tasks/bfz31x1ks.output",` +
+				`"summary":"Task \"Wait long\" was stopped by the user or by the app connected to this session"}`},
+		{"workflow-stoptask", "55da9afc-edae-4b4c-aac9-70d548d6ea29", "Workflow",
+			`{"id":"wx4fxxffc","type":"local_workflow","status":"stopped",` +
+				`"summary":"Task \"Ask one helper that takes its time\" was stopped by the user or by the app connected to this session. No result will follow unless the user has it resumed."}`},
+	} {
+		b, err := os.ReadFile(filepath.Join("testdata", "shells", tc.name+".history.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.SplitAfter(string(b), "\n")
+		stop := slices.IndexFunc(lines, func(l string) bool {
+			return strings.Contains(l, `"queue-operation"`) && strings.Contains(l, "<task-notification>")
+		})
+		if stop < 0 {
+			t.Fatalf("%s: no queued notification", tc.name)
+		}
+		for _, cut := range []struct {
+			name string
+			text string
+		}{{"whole", string(b)}, {"closed at the stop", strings.Join(lines[:stop+1], "")}} {
+			t.Run(tc.name+"/"+cut.name, func(t *testing.T) {
+				p := start(t, nil, fake())
+				cwd := t.TempDir()
+				dir := sessions.Store{ConfigDir: p.agent.cfg.ConfigDir}.ProjectDir(cwd)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, tc.sid+".jsonl"), []byte(cut.text), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				p.mustLoad(t, tc.sid, cwd)
+				var got []string
+				for _, n := range p.notes() {
+					if u := n.Update.ToolCallUpdate; u != nil && claudeMeta(u.Meta)["task"] != nil {
+						b, _ := json.Marshal(n.Update)
+						got = append(got, keysSorted(b))
+					}
+				}
+				sameLines(t, got, []string{keysSorted([]byte(`{"sessionUpdate":"tool_call_update","toolCallId":"toolu_fake_0002",` +
+					`"_meta":{"claudeCode":{"toolName":"` + tc.typ + `","task":` + tc.want + `}}}`))})
+			})
+		}
 	}
 }

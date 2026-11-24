@@ -268,7 +268,11 @@ only `_meta`:
 - `session/load` replays a command's or a workflow's end where the
   history has it (claude's notification of it, or its `TaskStop`). The
   history doesn't say that a task still runs, so its start is replayed
-  only for a session that is open, whose claude still runs it.
+  only for a session that is open, whose claude still runs it. A stop
+  replays as `stopped`, the live session's last word for it: claude
+  keeps a `_session/stopTask` stop only as its notification, queued for
+  the model (still queued if the session closed before another prompt),
+  which says `killed`.
 - `_session/stopTask` stops one (see
   [Extension methods](#extension-methods)).
 

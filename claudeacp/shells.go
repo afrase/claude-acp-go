@@ -170,13 +170,20 @@ func (r *replayer) shellStarted(t *tool, b claudeagent.Block, structured json.Ra
 }
 
 // shellEnded replays the end e of a background command or workflow the
-// history started, once.
+// history started, once. A stop's notification says "killed" (claude
+// writes it so for stop_task, whose stop the history keeps no TaskStop
+// of): the live session's last word for a stop is "stopped", and so is
+// the replay's.
 func (r *replayer) shellEnded(e taskNote) {
 	sh := r.shells[e.id]
 	if sh == nil || e.status == "" || sh.task.Status != "" && sh.task.Status != "running" {
 		return
 	}
-	r.s.tools.shell(sh, shellTask{ID: e.id, Type: sh.typ, Status: e.status, OutputFile: e.outputFile, Summary: e.summary})
+	status := e.status
+	if status == "killed" {
+		status = "stopped"
+	}
+	r.s.tools.shell(sh, shellTask{ID: e.id, Type: sh.typ, Status: status, OutputFile: e.outputFile, Summary: e.summary})
 }
 
 // shellStopped replays claude's TaskStop of the task id, if a background
