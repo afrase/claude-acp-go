@@ -324,8 +324,9 @@ or text), says when the message was sent, under `_meta`:
   (JavaScript's `toISOString`). An agent message claude wrote as several
   records, a record a block, has its first record's.
 - A message whose record has no timestamp has none, and neither has a
-  prompt claude took into a running turn (the history keeps no time for
-  it). Live updates carry none: a client dates those as they come.
+  prompt claude took into a running turn (it is replayed from claude's
+  `queued_command` attachment record, whose time the replay doesn't
+  send). Live updates carry none: a client dates those as they come.
 
 ## How it relates to the others
 
