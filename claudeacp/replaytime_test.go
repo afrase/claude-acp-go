@@ -54,3 +54,35 @@ func withField(r rec, name string, v any) rec {
 	r[name] = v
 	return r
 }
+
+// A subagent's replayed message keeps naming its call next to its time:
+// the first chunk's _meta.claudeCode has both parentToolUseId and
+// timestamp. (A client without subagents gets none of a subagent's
+// steps on a load.)
+func TestLoadReplaysSubagentTimestamps(t *testing.T) {
+	p := start(t, withSubagents, fake())
+	cwd, sid := t.TempDir(), nthUUID(1)
+	p.writeHistory(t, cwd, sid,
+		userRec("u1", "Count", "timestamp", "2026-11-16T03:07:16.039Z"),
+		withField(asstRec("a1", "msg_1", useBlock("toolu_A", "Agent", `{"description":"Count","prompt":"count"}`)),
+			"timestamp", "2026-11-16T03:07:16.059Z"),
+		userRec("r1", resultBlocks("toolu_A", "2", false), "timestamp", "2026-11-16T03:07:19.000Z"),
+	)
+	p.writeSubagent(t, cwd, sid, "agentA", "toolu_A",
+		withField(asstRec("s1", "msg_A1", textBlock("1, 2")), "timestamp", "2026-11-16T03:07:18.000Z"),
+		withField(asstRec("s2", "msg_A1", textBlock("3")), "timestamp", "2026-11-16T03:07:18.500Z"))
+	p.mustLoad(t, sid, cwd)
+	var got []string
+	for _, n := range p.notes() {
+		u := n.Update
+		if u.AgentMessageChunk == nil {
+			continue
+		}
+		m := claudeMeta(chunkOf(u).Meta)
+		got = append(got, str(m["parentToolUseId"])+" "+str(m["timestamp"]))
+	}
+	sameLines(t, got, []string{
+		"toolu_A 2026-11-16T03:07:18.000Z",
+		"toolu_A ",
+	})
+}
