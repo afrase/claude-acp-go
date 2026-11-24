@@ -186,6 +186,13 @@ type ContextUsage struct {
 // ContextCategory is one kind of what fills the context window: the
 // system prompt, tools, messages, free space.
 type ContextCategory struct {
+	// ID is claude's key for the category, which a client can tell one
+	// by: "messages" is the conversation's. Claude Code 2.1.331 sends
+	// "system_prompt", "system_tools", "system_tools_deferred",
+	// "mcp_tools_deferred", "custom_agents", "memory_files", "skills",
+	// "messages", "autocompact_buffer" and "free_space"; a "summary"
+	// answer has no "messages" category. An older claude sends none ("").
+	ID     string `json:"id"`
 	Name   string `json:"name"` // English, for display: claude may reword it
 	Tokens int    `json:"tokens"`
 	// Kind is what to classify the category on, never Name: "used",
@@ -196,7 +203,10 @@ type ContextCategory struct {
 }
 
 // ContextUsage asks how the context window is spent; detail is "summary",
-// "full" or "" (claude's default).
+// "full" or "" (claude's default, which answers as "full" does). No turn
+// runs, but claude may call the API's token-counting endpoint to answer
+// "full" (it did, once a session, in a recording of Claude Code
+// 2.1.331); "summary" is answered from claude's own estimates.
 func (s *Session) ContextUsage(ctx context.Context, detail string) (*ContextUsage, error) {
 	payload, err := s.request(ctx, struct {
 		ask

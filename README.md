@@ -184,11 +184,13 @@ be called while a turn runs, and none starts one.
 `_session/contextUsage`'s `detail` is claude's own: `"summary"`,
 `"full"`, or absent for claude's default. The answer is passed through as
 claude sent it. Its typed part, as `claudeagent.ContextUsage` decodes it,
-is `categories` (each a `name`, `tokens` and `kind`: `used`, `free`,
-`buffer` or `deferred`), `totalTokens`, `maxTokens`, `rawMaxTokens`,
-`percentage` and `model`. Anything else, such as the lists a `"full"`
-answer carries, is claude's undocumented own: claude may add, rename or
-reword it. Classify a category on `kind`, never on its English `name`.
+is `categories` (each an `id`, a `name`, `tokens` and `kind`: `used`,
+`free`, `buffer` or `deferred`), `totalTokens`, `maxTokens`,
+`rawMaxTokens`, `percentage` and `model`. Anything else, such as the
+lists a `"full"` answer carries, is claude's undocumented own: claude may
+add, rename or reword it. Classify a category on `kind` and tell one
+from another by `id` (the conversation's is `messages`), never by its
+English `name`.
 Nothing is forked and nothing is written to the transcript.
 
 `_session/stopTask` sends claude's `stop_task` control request: no turn
