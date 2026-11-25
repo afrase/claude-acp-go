@@ -355,18 +355,24 @@ func forkedFromAt(path string, at int64, records int) *ForkedFrom {
 	}
 	defer f.Close() //nolint:errcheck // read-only
 	r := bufio.NewReaderSize(io.NewSectionReader(f, at, forkScanLimit), liteRead)
-	window := make([]byte, 0, liteRead+len(forkKey))
-	var tail [len(forkKey)]byte // the record's last bytes so far, which a key may span
+	// edge holds the last bytes of the chunk before and the first of this
+	// one: a key the two split is found there.
+	var edge [2 * (len(forkKey) - 1)]byte
 	keep, found := 0, int64(-1)
 	for off := int64(0); records > 0; {
 		chunk, err := r.ReadSlice('\n')
-		window = append(append(window[:0], tail[:keep]...), chunk...)
-		if i := bytes.LastIndex(window, []byte(forkKey)); i >= 0 {
-			found = off - int64(keep) + int64(i)
+		if keep > 0 {
+			n := copy(edge[keep:], chunk)
+			if i := bytes.LastIndex(edge[:keep+n], []byte(forkKey)); i >= 0 {
+				found = off - int64(keep) + int64(i)
+			}
+		}
+		if i := bytes.LastIndex(chunk, []byte(forkKey)); i >= 0 {
+			found = off + int64(i)
 		}
 		off += int64(len(chunk))
-		if errors.Is(err, bufio.ErrBufferFull) {
-			keep = copy(tail[:], window[len(window)-min(len(forkKey)-1, len(window)):])
+		if errors.Is(err, bufio.ErrBufferFull) { // a full chunk: longer than a key
+			keep = copy(edge[:], chunk[len(chunk)-(len(forkKey)-1):])
 			continue
 		}
 		if found >= 0 {
