@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -407,6 +408,68 @@ func TestInfoForkedFromPastTheHead(t *testing.T) {
 	}
 }
 
+// A fork whose first records are long queued prompts says so on a later
+// record: claude writes a queue-operation record (the prompt, whole) before
+// the user record that ends with forkedFrom, and both pass the head. That
+// later record is read, as are the next ones up to the first eight in all;
+// one past them, a session that is no fork, and a forkedFrom inside a
+// string's text still make no fork.
+func TestInfoForkedFromAfterLongRecords(t *testing.T) {
+	_, _, dir := project(t)
+	src := newUUID()
+	long := strings.Repeat("x", 70<<10)
+	queued := func(id, content string) string {
+		return `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-01-01T00:00:00.000Z","sessionId":"` + id + `","content":"` + content + `"}`
+	}
+	user := func(id, fork string) string {
+		line := `{"type":"user","uuid":"u1","sessionId":"` + id + `","message":{"role":"user","content":"` + long + `"},"timestamp":"2026-01-01T00:00:01.000Z"`
+		if fork != "" {
+			line += `,"forkedFrom":{"sessionId":"` + fork + `","messageUuid":"m1"}`
+		}
+		return line + "}"
+	}
+	title := func(id string) string {
+		return `{"type":"custom-title","customTitle":"queued","sessionId":"` + id + `"}`
+	}
+	// exact is a record that ends the head: the next one starts just past it.
+	exact := func(id string) string {
+		line := queued(id, "")
+		return queued(id, strings.Repeat("y", liteRead-1-len(line)))
+	}
+	escaped := long + `\",\"forkedFrom\":{\"sessionId\":\"` + src + `\",\"messageUuid\":\"m1\"}`
+	for _, c := range []struct {
+		name  string
+		lines func(id string) []string
+		fork  bool
+	}{
+		{"queued then fork", func(id string) []string { return []string{queued(id, long), user(id, src), title(id)} }, true},
+		{"two queued then fork", func(id string) []string {
+			return []string{queued(id, long), queued(id, long), user(id, src), title(id)}
+		}, true},
+		{"head ends at a record's end", func(id string) []string { return []string{exact(id), user(id, src), title(id)} }, true},
+		{"fork on the last record read", func(id string) []string {
+			return append(slices.Repeat([]string{queued(id, long)}, forkRecords-1), user(id, src), title(id))
+		}, true},
+		{"fork past the records read", func(id string) []string {
+			return append(slices.Repeat([]string{queued(id, long)}, forkRecords), user(id, src), title(id))
+		}, false},
+		{"no fork", func(id string) []string { return []string{queued(id, long), user(id, ""), title(id)} }, false},
+		{"forkedFrom in a string", func(id string) []string {
+			return []string{queued(id, escaped), user(id, ""), title(id)}
+		}, false},
+	} {
+		id := newUUID()
+		writeLines(t, dir, id, c.lines(id)...)
+		info, err := ReadInfo(filepath.Join(dir, id+".jsonl"))
+		testNoErr(t, err)
+		if want := (&ForkedFrom{SessionID: src, MessageUUID: "m1"}); c.fork && (info.ForkedFrom == nil || *info.ForkedFrom != *want) {
+			t.Errorf("%s: ForkedFrom %+v, want %+v", c.name, info.ForkedFrom, want)
+		} else if !c.fork && info.ForkedFrom != nil {
+			t.Errorf("%s: ForkedFrom %+v, want nil", c.name, info.ForkedFrom)
+		}
+	}
+}
+
 // The rest of a cut record is read a chunk at a time: a forkedFrom key
 // the chunks split is still found, the record's last one wins, and one in
 // the next record isn't the cut record's.
@@ -435,7 +498,7 @@ func TestForkedFromAtChunks(t *testing.T) {
 			if err := os.WriteFile(path, []byte(c.text(pad)), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			got := forkedFromAt(path, 0)
+			got := forkedFromAt(path, 0, 1)
 			if (got == nil) != (c.want == nil) || c.want != nil && *got != *c.want {
 				t.Fatalf("%s, pad %d: %+v, want %+v", c.name, pad, got, c.want)
 			}
