@@ -2,6 +2,10 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.8.1 (2026-11-25)
+
+- `claudeagent/sessions`: `Info.ForkedFrom` of a fork whose first records are longer than the 64 KiB `List`, `Get` and `ReadInfo` read. Past that head they read only the record it cut short, but claude writes a prompt queued as a fork begins as a queue-operation record, with no `forkedFrom`, before the first copied record, so a fork whose queued prompt was long (over 64 KiB) had nil, and a client that hid forks showed it. They now read on, record by record and a chunk at a time, until one has a `forkedFrom` or the first eight records in all are read (at most 64 MiB past the head). A transcript whose head holds eight whole records costs what it did; a long session that is no fork may now cost up to eight long records read, where it cost one.
+
 ## v0.8.0 (2026-11-25)
 
 What a client had to scrape from claude, or guess, the library now says.
