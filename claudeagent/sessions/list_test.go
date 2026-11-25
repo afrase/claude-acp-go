@@ -411,8 +411,9 @@ func TestInfoForkedFromPastTheHead(t *testing.T) {
 // A fork whose first records are long queued prompts says so on a later
 // record: claude writes a queue-operation record (the prompt, whole) before
 // the user record that ends with forkedFrom, and both pass the head. That
-// later record is read, as are the next ones up to the first eight in all;
-// one past them, a session that is no fork, and a forkedFrom inside a
+// later record is read, as are the next ones up to the first eight in all,
+// the head's whole records among them, and always the one the head cut
+// short; one past them, a session that is no fork, and a forkedFrom inside a
 // string's text still make no fork.
 func TestInfoForkedFromAfterLongRecords(t *testing.T) {
 	_, _, dir := project(t)
@@ -431,10 +432,11 @@ func TestInfoForkedFromAfterLongRecords(t *testing.T) {
 	title := func(id string) string {
 		return `{"type":"custom-title","customTitle":"queued","sessionId":"` + id + `"}`
 	}
-	// exact is a record that ends the head: the next one starts just past it.
-	exact := func(id string) string {
+	// exactAfter is a record that ends the head, after n records of
+	// queued(id, ""): the next one starts just past it.
+	exactAfter := func(id string, n int) string {
 		line := queued(id, "")
-		return queued(id, strings.Repeat("y", liteRead-1-len(line)))
+		return queued(id, strings.Repeat("y", liteRead-1-len(line)-n*(len(line)+1)))
 	}
 	escaped := long + `\",\"forkedFrom\":{\"sessionId\":\"` + src + `\",\"messageUuid\":\"m1\"}`
 	for _, c := range []struct {
@@ -446,13 +448,30 @@ func TestInfoForkedFromAfterLongRecords(t *testing.T) {
 		{"two queued then fork", func(id string) []string {
 			return []string{queued(id, long), queued(id, long), user(id, src), title(id)}
 		}, true},
-		{"head ends at a record's end", func(id string) []string { return []string{exact(id), user(id, src), title(id)} }, true},
+		{"head ends at a record's end", func(id string) []string { return []string{exactAfter(id, 0), user(id, src), title(id)} }, true},
 		{"fork on the last record read", func(id string) []string {
 			return append(slices.Repeat([]string{queued(id, long)}, forkRecords-1), user(id, src), title(id))
 		}, true},
 		{"fork past the records read", func(id string) []string {
 			return append(slices.Repeat([]string{queued(id, long)}, forkRecords), user(id, src), title(id))
 		}, false},
+		// The head's whole records count toward the eight.
+		{"short records then fork as the eighth", func(id string) []string {
+			lines := append(slices.Repeat([]string{queued(id, "short")}, 3), slices.Repeat([]string{queued(id, long)}, 4)...)
+			return append(lines, user(id, src), title(id))
+		}, true},
+		{"short records then fork as the ninth", func(id string) []string {
+			lines := append(slices.Repeat([]string{queued(id, "short")}, 3), slices.Repeat([]string{queued(id, long)}, 5)...)
+			return append(lines, user(id, src), title(id))
+		}, false},
+		{"head ends after eight whole records", func(id string) []string {
+			lines := slices.Repeat([]string{queued(id, "")}, forkRecords-1)
+			return append(lines, exactAfter(id, forkRecords-1), user(id, src), title(id))
+		}, false},
+		// The record the head cut short is read however many it holds whole.
+		{"many short records then a cut fork", func(id string) []string {
+			return append(slices.Repeat([]string{queued(id, "short")}, 20), user(id, src), title(id))
+		}, true},
 		{"no fork", func(id string) []string { return []string{queued(id, long), user(id, ""), title(id)} }, false},
 		{"forkedFrom in a string", func(id string) []string {
 			return []string{queued(id, escaped), user(id, ""), title(id)}
