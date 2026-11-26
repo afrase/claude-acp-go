@@ -2,6 +2,11 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.8.2 (2026-11-27)
+
+- `claudeagent`: `Session.Close` hands on the messages read before it. claude writes a stopped task's end (`task_updated` `killed`, then `task_notification` `stopped`) just before its answer to `stop_task`, and `StopTask` returns on that answer, so a session closed at once could drop that end before `Messages`' reader had it: always for a reader that read only after `Close`, now and then for one reading alongside. What was read before `Close` now reaches the reader, in order, before the channel closes. What claude writes after `Close` is still dropped, and a reader that takes nothing for 5 s once claude has exited is taken to have stopped. `Close` still doesn't wait for the reader.
+- `claudeacp`: a session closed right after `_session/stopTask` still sends the task's `killed` and `stopped` updates, before `session/close` answers; they were lost now and then.
+
 ## v0.8.1 (2026-11-25)
 
 - `claudeagent/sessions`: `Info.ForkedFrom` of a fork whose first records are longer than the 64 KiB `List`, `Get` and `ReadInfo` read. Past that head they read only the record it cut short, but claude writes a prompt queued as a fork begins as a queue-operation record, with no `forkedFrom`, before the first copied record, so a fork whose queued prompt was long (over 64 KiB) had nil, and a client that hid forks showed it. They now read on, record by record and a chunk at a time, until one has a `forkedFrom` or the first eight records in all are read (at most 64 MiB past the head). A transcript whose head holds eight whole records costs what it did; a long session that is no fork may now cost up to eight long records read, where it cost one.
