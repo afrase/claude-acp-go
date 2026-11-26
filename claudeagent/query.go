@@ -17,7 +17,11 @@ func Query(ctx context.Context, prompt string, o Options) iter.Seq2[Message, err
 			yield(nil, err)
 			return
 		}
-		defer func() { _ = s.Close() }()
+		defer func() {
+			_ = s.Close()
+			for range s.Messages() { // what was read before Close, which no one reads now
+			}
+		}()
 		if _, err := s.Send(ctx, UserInput{Text: prompt}); err != nil {
 			yield(nil, err)
 			return

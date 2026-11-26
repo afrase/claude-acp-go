@@ -28,7 +28,8 @@ import (
 // the model of the stop at the next prompt. claude's answer is passed on
 // as it comes, beside its messages, not after them: those updates may
 // reach the client just after {}, so a client ends the task on them, not
-// on the answer. claude answered a stop of a
+// on the answer. They reach it all the same when the session is closed
+// right after: before session/close's answer. claude answered a stop of a
 // task already ended, and of a task id it never had, as it answers any:
 // with success, so {} says claude took the request, not that a task was
 // running. An error claude gives is the call's error, in claude's words.

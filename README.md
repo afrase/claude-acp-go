@@ -225,7 +225,8 @@ command or workflow ends as claude's `TaskStop` ends it, `killed` then
 the next prompt. claude sends that end before its answer, but the agent
 passes the answer on as it comes, so the two updates may reach the
 client just after `{}`: a client ends the task on them, not on the
-answer. claude answers a stop of a
+answer. They reach it all the same when the session is closed right
+after, before `session/close` answers. claude answers a stop of a
 task already ended, or of an id it never had, with success too, so `{}`
 says claude took the request, not that the task ran. An error claude
 gives is the call's error, in claude's words.

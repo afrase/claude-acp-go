@@ -336,3 +336,61 @@ func TestCapabilities(t *testing.T) {
 	}
 	finish(t, s, f)
 }
+
+// A stopped task's last words, which claude writes before its answer to
+// stop_task, reach Messages' reader though the session is closed at once:
+// Close hands on what was read before it, in order, before the channel
+// ends. Each round is a session of its own, closed from two goroutines at
+// once; in half of them the reader reads alongside, in the other half
+// only once Close has returned.
+func TestCloseRightAfterStopTask(t *testing.T) {
+	words := []string{
+		`{"type":"system","subtype":"task_updated","task_id":"bA","patch":{"status":"killed","end_time":7}}`,
+		`{"type":"system","subtype":"task_notification","task_id":"bA","tool_use_id":"toolu_A","status":"stopped","summary":"Sleep"}`,
+	}
+	const rounds = 300
+	var lost [2]int // by whether the reader read alongside
+	for i := range rounds {
+		alongside := i%2 == 0
+		s, f := start(t, claudeagent.Options{},
+			claudetest.Expect(`{"type":"control_request","request":{"subtype":"stop_task","task_id":"bA"}}`),
+			claudetest.Send(words[0]), claudetest.Send(words[1]), answer(`{}`),
+			claudetest.ExpectEOF())
+		closed := make(chan struct{})
+		got := make(chan []string, 1)
+		go func() {
+			if !alongside {
+				<-closed
+			}
+			var lines []string
+			for m := range s.Messages() {
+				lines = append(lines, string(m.Frame().Raw))
+			}
+			got <- lines
+		}()
+		if err := s.StopTask(context.Background(), "bA"); err != nil {
+			t.Fatal(err)
+		}
+		var closes sync.WaitGroup
+		for range 2 {
+			closes.Go(func() { _ = s.Close() })
+		}
+		closes.Wait()
+		close(closed)
+		select {
+		case lines := <-got:
+			if !slices.Equal(lines, words) {
+				lost[i%2]++
+			}
+		case <-time.After(5 * time.Second): // a guard, not an order
+			t.Fatal("the messages never ended")
+		}
+		if err := s.Wait(); err != nil || f.Err() != nil {
+			t.Fatalf("%v %v", err, f.Err())
+		}
+	}
+	if lost != [2]int{} {
+		t.Errorf("the task's end was lost, or out of order, in %d of %d rounds read alongside and %d of %d read after Close",
+			lost[0], rounds/2, lost[1], rounds/2)
+	}
+}

@@ -53,7 +53,9 @@ type agent struct {
 	// claude: "register" as its turn is about to be queued (a prompt slow
 	// to set up), "write" as its user message is about to be written (a
 	// big one being encoded); "ask" as a permission or question claude
-	// asks is about to be put to the user.
+	// asks is about to be put to the user; "handled" as a session's reader
+	// has handled one of claude's messages (a reader slow to take the
+	// next).
 	pause func(at string)
 
 	mu        sync.Mutex

@@ -39,11 +39,12 @@ type Session struct {
 
 	queued uint64 // messages joined the queue so far; read's own
 
-	qmu   sync.Mutex
-	queue []Message
-	qdone bool          // stdout has ended: nothing more joins the queue
-	qwake chan struct{} // signalled when the queue changes
-	out   chan Message
+	qmu     sync.Mutex
+	queue   []Message
+	qdone   bool          // stdout has ended: nothing more joins the queue
+	qclosed bool          // Close was called: nothing more joins the queue
+	qwake   chan struct{} // signalled when the queue changes
+	out     chan Message
 }
 
 // ErrExitedBeforeInit is Start's error when claude ended before it
@@ -125,10 +126,13 @@ func newSession(ctx context.Context, t *transport, o Options, hooks map[string]H
 }
 
 // Messages are claude's messages, in order, without the control
-// protocol's. The channel is closed when claude's stdout ends or the
-// session is closed; Wait then says how claude ended. It has one reader,
-// which should read it to the end: nothing is dropped, so messages no
-// one reads pile up in memory.
+// protocol's. The channel is closed when claude's stdout ends, or once
+// the session is closed and what was read before Close has been taken;
+// Wait then says how claude ended. It has one reader, which should read
+// it to the end: until Close nothing is dropped, so messages no one reads
+// pile up in memory. After Close, what claude writes is dropped, and a
+// reader that takes nothing for 5 s once claude has exited is taken to
+// have stopped: the rest is dropped then too.
 func (s *Session) Messages() <-chan Message { return s.out }
 
 // Init is claude's answer to initialize.
@@ -170,9 +174,11 @@ func (s *Session) read() {
 		if si, ok := m.(*SystemInit); ok {
 			s.addCapabilities(si.Capabilities) // before the message is seen, so Has agrees with it
 		}
-		s.queued++
 		s.qmu.Lock()
-		s.queue = append(s.queue, m)
+		if !s.qclosed {
+			s.queued++
+			s.queue = append(s.queue, m)
+		}
 		s.qmu.Unlock()
 		s.wake()
 	}
@@ -190,35 +196,65 @@ func (s *Session) wake() {
 	}
 }
 
+// closeWait is how long, after Close and claude's exit, the pump waits
+// for Messages' reader to take each message read before Close; a reader
+// that takes none for that long has stopped reading.
+const closeWait = 5 * time.Second
+
 // pump hands the queue to Messages' reader. The queue has no bound, so
 // the reading of claude's stdout never waits for that reader: a control
 // response gets through while the reader is busy, perhaps waiting for it.
+// So an answer can come back before the messages claude wrote ahead of it
+// have been taken, such as a stopped task's end before stop_task's answer:
+// after Close the pump still hands on what joined the queue before it,
+// which nothing joins any more, so it ends.
 func (s *Session) pump() {
 	defer close(s.out)
 	for {
 		s.qmu.Lock()
 		if len(s.queue) == 0 {
-			done := s.qdone
+			done := s.qdone || s.qclosed
 			s.qmu.Unlock()
 			if done {
 				return
 			}
 			select {
 			case <-s.qwake:
-				continue
 			case <-s.closing:
-				return
 			}
+			continue
 		}
 		m := s.queue[0]
 		s.queue[0] = nil
 		s.queue = s.queue[1:]
 		s.qmu.Unlock()
-		select {
-		case s.out <- m:
-		case <-s.closing:
+		if !s.hand(m) {
 			return
 		}
+	}
+}
+
+// hand hands m to Messages' reader. Once the session is closing it waits
+// until claude has exited (which Close sees to, and returns after, so a
+// reader that called it can read on), then at most closeWait; false: the
+// reader didn't take it, and has stopped.
+func (s *Session) hand(m Message) bool {
+	select {
+	case s.out <- m:
+		return true
+	case <-s.closing:
+	}
+	select {
+	case s.out <- m:
+		return true
+	case <-s.t.exited:
+	}
+	select {
+	case s.out <- m:
+		return true
+	case <-time.After(closeWait):
+		s.log.Debug("no one read the messages claude wrote before the session closed; dropped")
+		return false
 	}
 }
 
@@ -274,9 +310,14 @@ func (s *Session) write(ctx context.Context, v any) error {
 // group (claude alone, with SharedGroup) gets SIGTERM, and SIGKILL 5 s
 // after that. Close returns once claude has exited; Wait says how. It
 // doesn't interrupt a turn under way: claude finishes it first, unless
-// the signals come before.
+// the signals come before. The messages read before Close are still
+// handed on (Messages), and what claude writes after it is dropped; it
+// doesn't wait for Messages' reader.
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
+		s.qmu.Lock()
+		s.qclosed = true
+		s.qmu.Unlock()
 		close(s.closing)
 		s.end(ErrClosed)
 		s.t.close()

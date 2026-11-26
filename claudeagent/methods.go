@@ -149,7 +149,10 @@ func (s *Session) ApplyFlagSettings(ctx context.Context, settings map[string]any
 	}{ask{"apply_flag_settings"}, settings}, nil)
 }
 
-// StopTask stops a background task: a command or a subagent.
+// StopTask stops a background task: a command or a subagent. claude
+// writes the task's end (TaskUpdated, TaskNotification) before its
+// answer, so by the time StopTask returns it has been read, and Messages
+// hands it on though the session is closed at once.
 func (s *Session) StopTask(ctx context.Context, taskID string) error {
 	return s.do(ctx, struct {
 		ask

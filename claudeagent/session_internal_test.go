@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -115,9 +117,7 @@ func writing(t *testing.T) (*Session, *stdin) {
 	in := &stdin{closed: make(chan struct{})}
 	outR, outW := io.Pipe()
 	errR, errW := io.Pipe()
-	p := &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &untilStdinCloses{in, outW, errW}}
-	s := newSession(t.Context(), newTransport(p, Options{}), Options{}, nil)
-	s.initDone()
+	s := piped(t, &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &untilStdinCloses{in, outW, errW}})
 	t.Cleanup(func() { _ = s.Close() })
 	return s, in
 }
@@ -192,9 +192,7 @@ func TestRequestNotHeldByStuckWrite(t *testing.T) {
 	in := &stuckStdin{PipeWriter: inW, closed: make(chan struct{})}
 	outR, outW := io.Pipe()
 	errR, errW := io.Pipe()
-	p := &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &exitsOnClose{in, outW, errW}}
-	s := newSession(t.Context(), newTransport(p, Options{}), Options{}, nil)
-	s.initDone()
+	s := piped(t, &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &exitsOnClose{in, outW, errW}})
 	t.Cleanup(func() { _ = s.Close() })
 
 	sent := make(chan error, 1)
@@ -224,4 +222,99 @@ func TestRequestNotHeldByStuckWrite(t *testing.T) {
 	if err := <-sent; !errors.Is(err, ErrClosed) {
 		t.Errorf("the stuck Send: %v", err)
 	}
+}
+
+// exitsOnKill is a claude that writes on after its stdin closes and
+// exits only once killed.
+type exitsOnKill struct {
+	killed      chan struct{}
+	once        sync.Once
+	out, errOut io.Closer
+}
+
+func (p *exitsOnKill) Wait() error {
+	<-p.killed
+	_ = p.out.Close()
+	_ = p.errOut.Close()
+	return nil
+}
+
+func (p *exitsOnKill) Signal(sig os.Signal) error {
+	if sig == os.Kill {
+		p.once.Do(func() { close(p.killed) })
+	}
+	return nil
+}
+
+// After Close, what claude wrote before it is still handed on, in order,
+// to a reader that comes later, and what it writes after Close is
+// dropped, so the messages end.
+func TestCloseHandsOnWhatCameBefore(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		outR, outW := io.Pipe()
+		errR, errW := io.Pipe()
+		p := &Proc{Stdin: &stdin{closed: make(chan struct{})}, Stdout: outR, Stderr: errR,
+			Process: &exitsOnKill{killed: make(chan struct{}), out: outW, errOut: errW}}
+		s := piped(t, p)
+		before := []string{`{"type":"system","subtype":"status","n":1}`, `{"type":"system","subtype":"status","n":2}`}
+		for _, l := range before {
+			if _, err := io.WriteString(outW, l+"\n"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		synctest.Wait() // both queued, the pump holding the first
+		closed := make(chan struct{})
+		go func() {
+			_ = s.Close()
+			close(closed)
+		}()
+		<-s.closing
+		// claude writes on until it is killed, 7 s on the bubble's clock.
+		if _, err := io.WriteString(outW, `{"type":"system","subtype":"status","n":3}`+"\n"); err != nil {
+			t.Fatal(err)
+		}
+		<-closed
+		var got []string
+		for m := range s.Messages() {
+			got = append(got, string(m.Frame().Raw))
+		}
+		if !slices.Equal(got, before) {
+			t.Errorf("got %q", got)
+		}
+	})
+}
+
+// A reader that has stopped reading doesn't hold the pump for good: after
+// Close it waits closeWait for each message, then drops the rest.
+func TestCloseGivesUpOnAStoppedReader(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		in := &stdin{closed: make(chan struct{})}
+		outR, outW := io.Pipe()
+		errR, errW := io.Pipe()
+		p := &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &untilStdinCloses{in, outW, errW}}
+		s := piped(t, p)
+		for n := range 3 {
+			if _, err := fmt.Fprintf(outW, `{"type":"system","subtype":"status","n":%d}`+"\n", n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		synctest.Wait()
+		_ = s.Close()
+		time.Sleep(closeWait - time.Nanosecond) // the bubble's clock
+		if _, ok := <-s.Messages(); !ok {
+			t.Fatal("dropped before closeWait")
+		}
+		time.Sleep(closeWait + time.Nanosecond)
+		if m, ok := <-s.Messages(); ok {
+			t.Fatalf("still handed on after closeWait: %s", m.Frame().Raw)
+		}
+	})
+}
+
+// piped is a session on p whose initialize is written.
+func piped(t *testing.T, p *Proc) *Session {
+	t.Helper()
+	s := newSession(t.Context(), newTransport(p, Options{}), Options{}, nil)
+	s.initDone()
+	return s
 }

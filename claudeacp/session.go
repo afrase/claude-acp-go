@@ -149,6 +149,7 @@ func (s *session) reader() {
 		close(s.tick)
 		s.tick = make(chan struct{})
 		s.hmu.Unlock()
+		s.a.paused("handled")
 	}
 	err := s.cs.Wait() // and its stderr read through
 	s.stderr.flush()
