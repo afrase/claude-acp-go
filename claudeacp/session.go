@@ -308,6 +308,10 @@ func (s *session) close() {
 		s.settleLocked(t, cancelled(t))
 	}
 	s.mu.Unlock()
+	// The reader handles what claude wrote before the close, so a task's
+	// end reaches the client before session/close answers; a turn settled
+	// as cancelled just above may still see its last updates sent after
+	// its answer, which a client of a closing session can ignore.
 	_ = s.cs.Close()
 	<-s.read
 	s.bg.wait()

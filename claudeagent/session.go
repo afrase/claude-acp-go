@@ -76,7 +76,7 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	// by its answer (or its end) the file has done its work.
 	t.configRead()
 	if err != nil {
-		_ = s.Close()
+		s.abandon()
 		if !errors.Is(err, ErrClosed) {
 			return nil, err // claude's refusal, or ctx's end, which say initialize
 		}
@@ -88,7 +88,7 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	r := new(InitResponse)
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, r); err != nil {
-			_ = s.Close()
+			s.abandon()
 			return nil, fmt.Errorf("claudeagent: claude's answer to initialize: %w", err)
 		}
 	}
@@ -304,6 +304,16 @@ func (s *Session) write(ctx context.Context, v any) error {
 	return s.t.write(ctx, v)
 }
 
+// abandon closes a session no caller will get (Start failed) and takes
+// what its pump still holds: with no reader the pump would keep it, and
+// its goroutine, until closeWait after claude's exit.
+func (s *Session) abandon() {
+	_ = s.Close()
+	for m := range s.out {
+		_ = m
+	}
+}
+
 // Close ends the session: callbacks' contexts end, requests waiting for
 // an answer fail with ErrClosed, and claude's stdin is closed, which
 // tells it to finish and exit. If it hasn't exited 2 s later its process
@@ -312,7 +322,10 @@ func (s *Session) write(ctx context.Context, v any) error {
 // doesn't interrupt a turn under way: claude finishes it first, unless
 // the signals come before. The messages read before Close are still
 // handed on (Messages), and what claude writes after it is dropped; it
-// doesn't wait for Messages' reader.
+// doesn't wait for Messages' reader. A session whose Messages isn't read
+// to its end keeps those messages, and the goroutine handing them on,
+// until closeWait after claude's exit; a caller that wants them gone at
+// once reads Messages until it closes.
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		s.qmu.Lock()

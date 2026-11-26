@@ -311,6 +311,33 @@ func TestCloseGivesUpOnAStoppedReader(t *testing.T) {
 	})
 }
 
+// A session Start gives up on is left with nothing held: its pump has no
+// reader to hand on to, so what claude wrote is taken and dropped at once,
+// not after closeWait.
+func TestAbandonLeavesNothingHeld(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		in := &stdin{closed: make(chan struct{})}
+		outR, outW := io.Pipe()
+		errR, errW := io.Pipe()
+		p := &Proc{Stdin: in, Stdout: outR, Stderr: errR, Process: &untilStdinCloses{in, outW, errW}}
+		s := piped(t, p)
+		for n := range 3 {
+			if _, err := fmt.Fprintf(outW, `{"type":"system","subtype":"status","n":%d}`+"\n", n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		synctest.Wait()
+		start := time.Now() // the bubble's clock
+		s.abandon()
+		if m, ok := <-s.Messages(); ok {
+			t.Fatalf("still held after abandon: %s", m.Frame().Raw)
+		}
+		if waited := time.Since(start); waited != 0 {
+			t.Fatalf("abandon waited %v", waited)
+		}
+	})
+}
+
 // piped is a session on p whose initialize is written.
 func piped(t *testing.T, p *Proc) *Session {
 	t.Helper()
